@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/fairyicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fairy</title>
+    <style>
+      html { margin: 0; }
+      html[data-theme="dark"] { background-color: #1E1E2E; }
+      html:not([data-theme]) { background-color: #F5F5F5; }
+      html[data-theme="light"] { background-color: #F5F5F5; }
+    </style>
+    <script>
+      try {
+        var s = localStorage.getItem('aurorafairy-theme-settings');
+        if (s) { var t = JSON.parse(s).theme; if (t) document.documentElement.setAttribute('data-theme', t); }
+      } catch(e){}
+    </script>
+  </head>
+
+  <body style="margin: 0;">
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
