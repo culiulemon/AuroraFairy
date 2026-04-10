@@ -5,6 +5,7 @@ use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Mutex;
+use tauri::Manager;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -78,7 +79,18 @@ fn find_available_port() -> Option<u16> {
     None
 }
 
-fn find_qdrant_binary() -> Result<PathBuf, String> {
+fn find_qdrant_binary_with_app(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let binary: PathBuf = resource_dir.join("binaries").join("qdrant").join("qdrant.exe");
+        if binary.exists() {
+            eprintln!("[Qdrant] Found binary via resource_dir: {:?}", binary);
+            return Ok(binary);
+        }
+        eprintln!("[Qdrant] resource_dir binary not found at: {:?}", binary);
+    } else {
+        eprintln!("[Qdrant] Failed to get resource_dir");
+    }
+
     let exe_dir = std::env::current_exe()
         .map_err(|e| format!("Cannot determine exe path: {}", e))?
         .parent()
@@ -87,8 +99,17 @@ fn find_qdrant_binary() -> Result<PathBuf, String> {
 
     let binary = exe_dir.join("qdrant").join("qdrant.exe");
     if binary.exists() {
+        eprintln!("[Qdrant] Found binary via exe_dir: {:?}", binary);
         return Ok(binary);
     }
+    eprintln!("[Qdrant] exe_dir binary not found at: {:?}", binary);
+
+    let binary2 = exe_dir.join("binaries").join("qdrant").join("qdrant.exe");
+    if binary2.exists() {
+        eprintln!("[Qdrant] Found binary via exe_dir/binaries: {:?}", binary2);
+        return Ok(binary2);
+    }
+    eprintln!("[Qdrant] exe_dir/binaries binary not found at: {:?}", binary2);
 
     let dev_fallback = exe_dir
         .parent()
@@ -96,14 +117,14 @@ fn find_qdrant_binary() -> Result<PathBuf, String> {
         .map(|p| p.join("binaries").join("qdrant").join("qdrant.exe"));
     if let Some(ref fallback) = dev_fallback {
         if fallback.exists() {
+            eprintln!("[Qdrant] Found binary via dev_fallback: {:?}", fallback);
             return Ok(fallback.clone());
         }
+        eprintln!("[Qdrant] dev_fallback binary not found at: {:?}", fallback);
     }
 
     Err(format!(
-        "Qdrant binary not found at {:?} or {:?}",
-        binary,
-        dev_fallback.unwrap_or_default()
+        "Qdrant binary not found. Searched: resource_dir/binaries/qdrant, exe_dir/qdrant, exe_dir/binaries/qdrant, dev_fallback"
     ))
 }
 
@@ -145,6 +166,7 @@ fn wait_for_qdrant(port: u16, timeout_secs: u64) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn qdrant_start(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<QdrantState>>,
     working_dir: String,
 ) -> Result<u16, String> {
@@ -163,7 +185,7 @@ pub async fn qdrant_start(
     let storage_path = PathBuf::from(&working_dir).join("memories").join("qdrant_storage");
     clean_qdrant_locks(&storage_path);
 
-    match try_start_qdrant(&working_dir, port, &storage_path) {
+    match try_start_qdrant(&app, &working_dir, port, &storage_path) {
         Ok(child) => {
             let mut qstate = state.lock().map_err(|e| format!("Lock error: {}", e))?;
             qstate.process = Some(child);
@@ -179,7 +201,7 @@ pub async fn qdrant_start(
             kill_orphaned_qdrant();
 
             let port2 = find_available_port().ok_or("No available port in range 16333-16433")?;
-            match try_start_qdrant(&working_dir, port2, &storage_path) {
+            match try_start_qdrant(&app, &working_dir, port2, &storage_path) {
                 Ok(child) => {
                     let mut qstate = state.lock().map_err(|e| format!("Lock error: {}", e))?;
                     qstate.process = Some(child);
@@ -197,6 +219,7 @@ pub async fn qdrant_start(
 }
 
 fn try_start_qdrant(
+    app: &tauri::AppHandle,
     working_dir: &str,
     port: u16,
     storage_path: &std::path::Path,
@@ -207,7 +230,7 @@ fn try_start_qdrant(
     let config_path = PathBuf::from(working_dir).join("memories").join("qdrant_config.yaml");
     write_qdrant_config(&config_path, port, storage_path)?;
 
-    let qdrant_binary = find_qdrant_binary()?;
+    let qdrant_binary = find_qdrant_binary_with_app(app)?;
 
     let log_path = PathBuf::from(working_dir).join("memories").join("qdrant.log");
     let log_file = std::fs::File::create(&log_path)

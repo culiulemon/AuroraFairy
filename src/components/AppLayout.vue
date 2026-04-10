@@ -56,7 +56,7 @@
         <SecurityRulesPage @back="handleNavChange('control')" />
       </template>
       <template v-else-if="activeNav === 'agent' && activeSubNav === 'memory'">
-        <AgentMemoryPage />
+        <AgentMemoryPage @back="handleNavChange('agent')" />
       </template>
       <template v-else-if="activeNav === 'settings' && activeSubNav === 'personalization'">
         <PersonalizationPage @back="handleBackFromSettings" />

@@ -1,5 +1,6 @@
 import { loadSettings } from './settings.js'
 import type { ApiProvider } from './settings.js'
+import type { EmbeddingAdapter } from '../fbm/src/types/adapter.js'
 import { loadMiscSettings, getEffectiveWorkingDir } from './miscSettings.js'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -54,7 +55,9 @@ function getTemplateVariables(): Record<string, string> {
 
 async function loadFBMModule(): Promise<typeof fbmModule> {
   if (fbmModule) return fbmModule
-  if (fbmLoadFailed) return null
+  if (fbmLoadFailed) {
+    fbmLoadFailed = false
+  }
 
   try {
     fbmModule = await import('../fbm/src/index.js')
@@ -128,6 +131,22 @@ async function doInit(
     console.warn('[FBM] Initialization failed:', err)
     fbm = null
   }
+}
+
+export async function getEmbeddingAdapter(): Promise<EmbeddingAdapter | null> {
+  const settings = loadSettings()
+  const embProviderId = settings.fbmEmbeddingProviderId
+  if (!embProviderId) return null
+
+  const provider = settings.providers.find(p => p.id === embProviderId)
+  if (!provider) return null
+
+  const { OpenAIEmbeddingAdapter } = await import('../fbm/src/core/adapters/openai-embedding.js')
+  return new OpenAIEmbeddingAdapter({
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    model: provider.model,
+  })
 }
 
 export const fbmStore = {
