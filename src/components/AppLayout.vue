@@ -46,6 +46,9 @@
       <template v-else-if="activeNav === 'agent' && activeSubNav === 'tools'">
         <AgentToolsPage @back="handleBackFromTools" />
       </template>
+      <template v-else-if="activeNav === 'agent' && activeSubNav === 'skills'">
+        <SkillsPage @back="handleBackFromTools" />
+      </template>
       <template v-else-if="activeNav === 'agent' && activeSubNav === 'role'">
         <RolePage @back="handleBackFromTools" />
       </template>
@@ -109,6 +112,7 @@ const AboutPage = defineAsyncComponent(() => import('./AboutPage.vue'))
 const MiscSettingsPage = defineAsyncComponent(() => import('./MiscSettingsPage.vue'))
 const AgentMemoryPage = defineAsyncComponent(() => import('./AgentMemoryPage.vue'))
 const RolePage = defineAsyncComponent(() => import('./RolePage.vue'))
+const SkillsPage = defineAsyncComponent(() => import('./SkillsPage.vue'))
 const ChannelsPage = defineAsyncComponent(() => import('./ChannelsPage.vue'))
 
 const activeNav = ref('chat')

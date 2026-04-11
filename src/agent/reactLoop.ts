@@ -29,6 +29,7 @@ export interface ToolResultMessage {
 export interface ReActConfig {
   maxIterations?: number
   tools: Tool[]
+  extraAllowedPaths?: string[]
   onTurnStart?: (turnNumber: number) => void
   onChunk?: (chunk: string) => void
   onReasoningChunk?: (reasoning: string) => void
@@ -125,6 +126,11 @@ export async function executeReActLoop(
   const toolResults: ReActResult['toolResults'] = []
   let iterationsExecuted = 0
   const approvedPaths = new Set<string>()
+  if (config.extraAllowedPaths) {
+    for (const p of config.extraAllowedPaths) {
+      approvedPaths.add(p)
+    }
+  }
   let emptyRetries = 0
   const MAX_EMPTY_RETRIES = 2
 

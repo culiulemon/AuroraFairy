@@ -82,7 +82,7 @@ async function readCorefile(fileName: string, fallback: string): Promise<string>
   }
 }
 
-export async function assembleSystemPrompt(): Promise<string> {
+export async function assembleSystemPrompt(skillsPrompt?: string): Promise<string> {
   const settings = loadSettings()
   const [soulRaw, habitRaw, syspromptRaw] = await Promise.all([
     readCorefile('SOUL.md', soulFallback),
@@ -117,6 +117,9 @@ export async function assembleSystemPrompt(): Promise<string> {
   let result = `${processedSoul}\n\n---\n\n${processedHabit}\n\n---\n\n${finalSysprompt}`
   if (memoryPrompt) {
     result += `\n\n---\n\n${memoryPrompt}`
+  }
+  if (skillsPrompt) {
+    result += `\n\n---\n\n${skillsPrompt}`
   }
   if (roleConfigPrompt) {
     result += `\n\n---\n\n${roleConfigPrompt}`

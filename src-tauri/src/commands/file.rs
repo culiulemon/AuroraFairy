@@ -130,22 +130,24 @@ pub fn file_glob(pattern: &str, working_dir: &str, data_dir: Option<&str>) -> Re
             }
         }
         let base: std::path::PathBuf = base_components.into_iter().collect();
-        let gp = glob_parts.join(&std::path::MAIN_SEPARATOR.to_string());
-        let base_str = base.to_string_lossy().to_string();
+        let gp = glob_parts.join("/");
+        let base_normalized = base.canonicalize()
+            .unwrap_or_else(|_| base.clone())
+            .to_string_lossy().to_string();
         let working_dir_normalized = Path::new(working_dir).canonicalize()
             .unwrap_or_else(|_| Path::new(working_dir).to_path_buf())
             .to_string_lossy().to_string();
-        let is_in_working_dir = base_str == working_dir_normalized
-            || base_str.starts_with(&format!("{}{}", working_dir_normalized, std::path::MAIN_SEPARATOR));
+        let is_in_working_dir = base_normalized == working_dir_normalized
+            || base_normalized.starts_with(&format!("{}{}", working_dir_normalized, std::path::MAIN_SEPARATOR));
         let is_in_data_dir = data_dir.map_or(false, |dd| {
             let dd_normalized = Path::new(dd).canonicalize()
                 .unwrap_or_else(|_| Path::new(dd).to_path_buf())
                 .to_string_lossy().to_string();
-            base_str == dd_normalized
-                || base_str.starts_with(&format!("{}{}", dd_normalized, std::path::MAIN_SEPARATOR))
+            base_normalized == dd_normalized
+                || base_normalized.starts_with(&format!("{}{}", dd_normalized, std::path::MAIN_SEPARATOR))
         });
         if !is_in_working_dir && !is_in_data_dir {
-            return Err(format!("glob 路径不在允许的目录范围内: {}", base_str));
+            return Err(format!("glob 路径不在允许的目录范围内: {}", base_normalized));
         }
         (base, if gp.is_empty() { "*".to_string() } else { gp })
     } else {
@@ -316,11 +318,12 @@ pub fn validate_path(path: &str, working_dir: &str, data_dir: Option<&str>, extr
 }
 
 fn matches_glob(path: &str, pattern: &str) -> bool {
+    let path = path.replace('\\', "/");
     let pattern = pattern.trim_start_matches("**/");
     
     if pattern.starts_with("*.") {
         let ext = &pattern[2..];
-        if let Some(path_ext) = Path::new(path).extension() {
+        if let Some(path_ext) = Path::new(&path).extension() {
             return path_ext.to_string_lossy() == ext;
         }
         return false;
@@ -334,7 +337,7 @@ fn matches_glob(path: &str, pattern: &str) -> bool {
             .replace("*", "[^/]*");
         
         if let Ok(re) = Regex::new(&format!("^{}$", regex_pattern)) {
-            return re.is_match(path);
+            return re.is_match(&path);
         }
     }
 

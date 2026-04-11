@@ -5,6 +5,10 @@ import { loadAllTools } from '../stores/toolsStore'
 import { loadSettings } from '../stores/settings'
 import type { Tool } from '../types/tool'
 import { buildContextMessages, triggerSummaryGeneration } from './contextManager'
+import { skillManager } from './skills/skillManager'
+import { buildSkillsPrompt } from './skills/skillInjector'
+import { evolveSkillMetadata } from './skills/skillEvolver'
+import { getLLMAdapter } from '../stores/fbmStore'
 
 export interface DispatcherCallbacks {
   onChunk: (chunk: string) => void
@@ -83,7 +87,25 @@ export async function dispatchMessage(
       content: m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join('')
     }))
 
-  const systemPrompt = await assembleSystemPrompt()
+  let skillsPrompt = ''
+  let activatedSkills: import('./skills/types').SkillIndexEntry[] = []
+  let writableSkillDirs: string[] = []
+  try {
+    const skillLlm = await getLLMAdapter()
+    if (skillLlm) {
+      activatedSkills = await skillManager.matchSkills(content, skillLlm)
+      if (activatedSkills.length > 0) {
+        const activatedNames = activatedSkills.map(s => s.name)
+        const contentMap = await skillManager.getSkillContentMap(activatedNames)
+        skillsPrompt = buildSkillsPrompt(activatedSkills, contentMap)
+        writableSkillDirs = skillManager.getWritableSkillDirs(activatedNames)
+      }
+    }
+  } catch (e) {
+    console.warn('[Dispatcher] Skill matching failed:', e)
+  }
+
+  const systemPrompt = await assembleSystemPrompt(skillsPrompt)
 
   const userTools = await loadAllTools()
   const filtered = userTools.filter(t => !t.id.startsWith('sys-') && !t.id.startsWith('builtin-'))
@@ -155,6 +177,7 @@ export async function dispatchMessage(
   try {
     const result = await executeReActLoop(provider.id, llmMessages, {
       tools: allTools,
+      extraAllowedPaths: writableSkillDirs.length > 0 ? writableSkillDirs : undefined,
       signal,
       onApproveAccess: callbacks.onApproveAccess,
       onTurnStart: () => {
@@ -213,6 +236,37 @@ export async function dispatchMessage(
       ).catch((err) => {
         console.warn('[Dispatcher] Background summary generation failed:', err)
       })
+    }
+    if (activatedSkills.length > 0) {
+      try {
+        const skillLlm = await getLLMAdapter()
+        if (skillLlm) {
+          const currentConv = deps.getActiveConversation()
+          const lastAssistantMsg = currentConv?.messages
+            .filter(m => !m.isLoading && m.role === 'assistant')
+            .map(m => m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join(''))
+            .pop() || ''
+          for (const skill of activatedSkills) {
+            const evolveResult = await evolveSkillMetadata(
+              skill.description,
+              skill.tags,
+              skill.argumentHint,
+              content,
+              lastAssistantMsg,
+              skillLlm
+            )
+            if (evolveResult.needsUpdate) {
+              await skillManager.updateSkillMetadata(skill.name, {
+                description: evolveResult.newDescription || undefined,
+                tags: evolveResult.newTags || undefined,
+                argumentHint: evolveResult.newArgumentHint || undefined,
+              })
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Dispatcher] Skill description evolution failed:', err)
+      }
     }
   }
 }

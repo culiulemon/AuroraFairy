@@ -1,6 +1,6 @@
 import { loadSettings } from './settings.js'
 import type { ApiProvider } from './settings.js'
-import type { EmbeddingAdapter } from '../fbm/src/types/adapter.js'
+import type { EmbeddingAdapter, LLMAdapter } from '../fbm/src/types/adapter.js'
 import { loadMiscSettings, getEffectiveWorkingDir } from './miscSettings.js'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -143,6 +143,22 @@ export async function getEmbeddingAdapter(): Promise<EmbeddingAdapter | null> {
 
   const { OpenAIEmbeddingAdapter } = await import('../fbm/src/core/adapters/openai-embedding.js')
   return new OpenAIEmbeddingAdapter({
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    model: provider.model,
+  })
+}
+
+export async function getLLMAdapter(): Promise<LLMAdapter | null> {
+  const settings = loadSettings()
+  const providerId = settings.fbmProviderId || settings.defaultProviderId
+  if (!providerId) return null
+
+  const provider = settings.providers.find(p => p.id === providerId)
+  if (!provider) return null
+
+  const { OpenAILLMAdapter } = await import('../fbm/src/core/adapters/openai-llm.js')
+  return new OpenAILLMAdapter({
     baseUrl: provider.baseUrl,
     apiKey: provider.apiKey,
     model: provider.model,
