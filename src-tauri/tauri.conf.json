@@ -47,7 +47,8 @@
       }
     },
     "resources": [
-      "binaries/qdrant/"
+      "binaries/qdrant/",
+      "binaries/fairy-action.exe"
     ]
   }
 }

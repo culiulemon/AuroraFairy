@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tauri::Manager;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, ChildStderr, Command};
 use tokio::sync::Mutex;
@@ -29,24 +30,42 @@ impl BrowserManager {
     }
 }
 
-const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
+fn get_fairy_action_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let binary = resource_dir.join("binaries").join("fairy-action.exe");
+        if binary.exists() {
+            return Ok(binary);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let binary = resource_dir.join("binaries").join("fairy-action");
+            if binary.exists() {
+                return Ok(binary);
+            }
+        }
+    }
 
-fn get_fairy_action_path() -> Result<PathBuf, String> {
     let exe_dir = std::env::current_exe()
         .map_err(|e| format!("获取可执行文件路径失败: {}", e))?
         .parent()
         .ok_or("无法获取父目录")?
         .to_path_buf();
 
-    let manifest_path = PathBuf::from(MANIFEST_DIR);
-
     let candidates: Vec<PathBuf> = vec![
-        manifest_path.join("binaries").join("fairy-action.exe"),
-        manifest_path.join("binaries").join("fairy-action"),
         exe_dir.join("binaries").join("fairy-action.exe"),
         exe_dir.join("binaries").join("fairy-action"),
         exe_dir.join("fairy-action.exe"),
         exe_dir.join("fairy-action"),
+        exe_dir
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("binaries").join("fairy-action.exe"))
+            .unwrap_or_default(),
+        exe_dir
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("binaries").join("fairy-action"))
+            .unwrap_or_default(),
     ];
 
     for path in &candidates {
@@ -67,6 +86,7 @@ fn get_fairy_action_path() -> Result<PathBuf, String> {
 
     let searched = candidates
         .iter()
+        .filter(|p| !p.as_os_str().is_empty())
         .map(|p| p.display().to_string())
         .collect::<Vec<_>>()
         .join("\n  ");
@@ -128,6 +148,7 @@ async fn send_and_receive(
 
 #[tauri::command]
 pub async fn browser_start(
+    app: tauri::AppHandle,
     state: tauri::State<'_, BrowserManager>,
     show_browser: Option<bool>,
     default_search_engine: Option<String>,
@@ -142,7 +163,7 @@ pub async fn browser_start(
         }
     }
 
-    let exe_path = get_fairy_action_path()?;
+    let exe_path = get_fairy_action_path(&app)?;
 
     let mut cmd = Command::new(&exe_path);
     cmd.arg("run")

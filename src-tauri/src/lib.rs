@@ -242,8 +242,8 @@ fn open_folder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn shell_execute(command: String, timeout: u64) -> Result<String, String> {
-    commands::shell_execute(command, timeout).await
+async fn shell_execute(command: String, timeout: u64, shell_type: Option<String>) -> Result<String, String> {
+    commands::shell_execute(command, timeout, shell_type).await
 }
 
 #[tauri::command]

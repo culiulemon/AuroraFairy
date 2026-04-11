@@ -4,12 +4,65 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 #[cfg(target_os = "windows")]
-const SHELL: &[&str] = &["cmd", "/C"];
+const DEFAULT_SHELL: &[&str] = &["cmd", "/C"];
 #[cfg(not(target_os = "windows"))]
-const SHELL: &[&str] = &["sh", "-c"];
+const DEFAULT_SHELL: &[&str] = &["sh", "-c"];
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+fn resolve_shell(shell_type: &Option<String>) -> Result<Vec<&str>, String> {
+    match shell_type.as_deref() {
+        None | Some("default") => Ok(DEFAULT_SHELL.to_vec()),
+        Some("cmd") => Ok(vec!["cmd", "/C"]),
+        Some("powershell") | Some("pwsh") => Ok(vec!["powershell", "-Command"]),
+        Some("bash") => {
+            #[cfg(target_os = "windows")]
+            {
+                for candidate in &["bash", "git", "C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files (x86)\\Git\\bin\\bash.exe"] {
+                    if which_shell(candidate).is_some() {
+                        return Ok(vec![which_shell(candidate).unwrap(), "-c"]);
+                    }
+                }
+                Err("bash 不可用: 未找到 bash 或 Git Bash，请安装 Git for Windows".to_string())
+            }
+            #[cfg(not(target_os = "windows"))]
+            { Ok(vec!["bash", "-c"]) }
+        }
+        Some("sh") => {
+            #[cfg(target_os = "windows")]
+            {
+                Err("sh 不可用: Windows 上不支持 sh，请使用 bash (需安装 Git Bash)".to_string())
+            }
+            #[cfg(not(target_os = "windows"))]
+            { Ok(vec!["sh", "-c"]) }
+        }
+        Some(other) => Err(format!("不支持的 shell 类型: {}，可选: default, cmd, powershell, bash, sh", other)),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn which_shell(name: &str) -> Option<&str> {
+    use std::path::Path;
+    if Path::new(name).exists() {
+        return Some(name);
+    }
+    if which_binary_exists(name) {
+        return Some(name);
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn which_binary_exists(name: &str) -> bool {
+    std::process::Command::new("where")
+        .arg(name)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
 
 const BLOCKED_PATTERNS: &[&str] = &[
     "rm -rf /",
@@ -43,7 +96,7 @@ fn decode_output(bytes: &[u8]) -> String {
     }
 }
 
-pub async fn shell_execute(command: String, timeout_secs: u64) -> Result<String, String> {
+pub async fn shell_execute(command: String, timeout_secs: u64, shell_type: Option<String>) -> Result<String, String> {
     if command.trim().is_empty() {
         return Err("命令不能为空".to_string());
     }
@@ -54,9 +107,12 @@ pub async fn shell_execute(command: String, timeout_secs: u64) -> Result<String,
         }
     }
 
-    let mut cmd = Command::new(SHELL[0]);
-    cmd.arg(SHELL[1])
-        .arg(&command)
+    let shell_parts = resolve_shell(&shell_type)?;
+    let mut cmd = Command::new(shell_parts[0]);
+    if shell_parts.len() > 1 {
+        cmd.arg(shell_parts[1]);
+    }
+    cmd.arg(&command)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
@@ -94,13 +150,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_blocked_commands() {
-        assert!(shell_execute("rm -rf /".to_string(), 1).await.is_err());
-        assert!(shell_execute("mkfs".to_string(), 1).await.is_err());
+        assert!(shell_execute("rm -rf /".to_string(), 1, None).await.is_err());
+        assert!(shell_execute("mkfs".to_string(), 1, None).await.is_err());
     }
 
     #[tokio::test]
     async fn test_valid_command() {
-        let result = shell_execute("echo hello".to_string(), 5).await;
+        let result = shell_execute("echo hello".to_string(), 5, None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().contains("hello"));
     }

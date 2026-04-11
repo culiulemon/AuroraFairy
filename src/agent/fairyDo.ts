@@ -118,6 +118,7 @@ export const EXECUTOR_PARAM_DEFS: ExecutorParamDefs = {
   shell_execute: [
     { name: 'command', type: 'string', required: true, description: '要执行的命令' },
     { name: 'timeout', type: 'number', required: true, description: '超时时间(秒)' },
+    { name: 'shell_type', type: 'string', required: false, description: 'Shell 类型: default|cmd|powershell|bash|sh' },
   ],
   file_read: [
     { name: 'path', type: 'string', required: true, description: '文件路径' },

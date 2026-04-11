@@ -4,14 +4,15 @@ export const sysTools: Tool[] = [
   {
     id: 'sys-execute_shell',
     name: '执行 Shell',
-    description: '执行 Shell 命令',
+    description: '执行 Shell 命令。Windows 默认使用 cmd，Linux/macOS 默认使用 sh。当命令包含 bash 语法（如 for...do...done、${VAR:-}、$(...) 等）时，请设置 shell_type 为 "bash"（Windows 需已安装 Git Bash）。支持直接执行 python 脚本（如 python script.py）。',
     logo: '',
     logoType: undefined,
     invokeName: 'execute_shell',
     filePath: '',
     parameters: [
       { name: 'command', type: 'string', description: '要执行的命令', required: true },
-      { name: 'timeout', type: 'number', description: '超时时间(秒)', required: false, default: 60 }
+      { name: 'timeout', type: 'number', description: '超时时间(秒)', required: false, default: 60 },
+      { name: 'shell_type', type: 'string', description: 'Shell 类型: default(系统默认)|cmd(Windows cmd)|powershell|bash|sh。包含 bash 语法的命令需设为 bash', required: false },
     ],
     executor: 'shell_execute',
     code: undefined,
