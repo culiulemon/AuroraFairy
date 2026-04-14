@@ -87,42 +87,34 @@ export async function dispatchMessage(
       content: m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join('')
     }))
 
-  let skillsPrompt = ''
-  let activatedSkills: import('./skills/types').SkillIndexEntry[] = []
-  let writableSkillDirs: string[] = []
-  try {
-    const skillLlm = await getLLMAdapter()
-    if (skillLlm) {
-      activatedSkills = await skillManager.matchSkills(content, skillLlm)
-      if (activatedSkills.length > 0) {
-        const activatedNames = activatedSkills.map(s => s.name)
-        const contentMap = await skillManager.getSkillContentMap(activatedNames)
-        skillsPrompt = buildSkillsPrompt(activatedSkills, contentMap)
-        writableSkillDirs = skillManager.getWritableSkillDirs(activatedNames)
+  const skillTask = (async (): Promise<{
+    skillsPrompt: string
+    activatedSkills: import('./skills/types').SkillIndexEntry[]
+    writableSkillDirs: string[]
+  }> => {
+    let skillsPrompt = ''
+    let activatedSkills: import('./skills/types').SkillIndexEntry[] = []
+    let writableSkillDirs: string[] = []
+    try {
+      const skillLlm = await getLLMAdapter()
+      if (skillLlm) {
+        activatedSkills = await skillManager.matchSkills(content, skillLlm)
+        if (activatedSkills.length > 0) {
+          const activatedNames = activatedSkills.map(s => s.name)
+          const contentMap = await skillManager.getSkillContentMap(activatedNames)
+          skillsPrompt = buildSkillsPrompt(activatedSkills, contentMap)
+          writableSkillDirs = skillManager.getWritableSkillDirs(activatedNames)
+        }
       }
+    } catch (e) {
+      console.warn('[Dispatcher] Skill matching failed:', e)
     }
-  } catch (e) {
-    console.warn('[Dispatcher] Skill matching failed:', e)
-  }
+    return { skillsPrompt, activatedSkills, writableSkillDirs }
+  })()
 
-  const systemPrompt = await assembleSystemPrompt(skillsPrompt)
-
-  const userTools = await loadAllTools()
-  const filtered = userTools.filter(t => !t.id.startsWith('sys-') && !t.id.startsWith('builtin-'))
-  const allTools: Tool[] = [...sysTools, ...filtered]
-  if (deps.fbmStore.isEnabled() && settings.fbmSmartRecall !== false) {
-    allTools.push(memorySearchTool)
-  }
-  allTools.push(roleConfigTool)
-
-  deps.fairyDo.registerAll(allTools)
-  deps.setCurrentTools(allTools)
-  deps.setCurrentProviderId(provider.id)
-
-  try { await deps.fbmStore.ensureInit() } catch (e) { console.warn('[Dispatcher] FBM ensureInit failed:', e) }
-
-  let memoryContext = ''
-  if (settings.fbmSmartRecall === false && deps.fbmStore.isEnabled()) {
+  const memoryTask = (async (): Promise<string> => {
+    if (settings.fbmSmartRecall !== false || !deps.fbmStore.isEnabled()) return ''
+    try { await deps.fbmStore.ensureInit() } catch (e) { console.warn('[Dispatcher] FBM ensureInit failed:', e) }
     try {
       callbacks.onMemoryRecallStart()
       const userMessages = conv.messages
@@ -137,7 +129,8 @@ export async function dispatchMessage(
         if (keywords.length > 0) {
           memoryText = `检索关键词: ${keywords.join(', ')}\n\n${memoryText}`
         }
-        memoryContext = [
+        callbacks.onMemoryRecallComplete(result.summary, keywords)
+        return [
           '',
           '---',
           '',
@@ -146,7 +139,6 @@ export async function dispatchMessage(
           memoryText,
           '',
         ].join('\n')
-        callbacks.onMemoryRecallComplete(result.summary, keywords)
       } else {
         const keywords = deps.fbmStore.getLastRetrieveKeywords()
         const summary = result?.summary ?? '没有找到相关记忆'
@@ -156,7 +148,24 @@ export async function dispatchMessage(
       console.warn('[Dispatcher] Auto retrieve failed:', err)
       callbacks.onMemoryRecallError()
     }
+    return ''
+  })()
+
+  const [{ skillsPrompt, activatedSkills, writableSkillDirs }, memoryContext] = await Promise.all([skillTask, memoryTask])
+
+  const systemPrompt = await assembleSystemPrompt(skillsPrompt)
+
+  const userTools = await loadAllTools()
+  const filtered = userTools.filter(t => !t.id.startsWith('sys-') && !t.id.startsWith('builtin-'))
+  const allTools: Tool[] = [...sysTools, ...filtered]
+  if (deps.fbmStore.isEnabled() && settings.fbmSmartRecall !== false) {
+    allTools.push(memorySearchTool)
   }
+  allTools.push(roleConfigTool)
+
+  deps.fairyDo.registerAll(allTools)
+  deps.setCurrentTools(allTools)
+  deps.setCurrentProviderId(provider.id)
 
   const contextResult = await buildContextMessages({
     systemPrompt,

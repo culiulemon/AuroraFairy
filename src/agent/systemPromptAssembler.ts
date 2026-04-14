@@ -46,6 +46,37 @@ export function assembleMemoryPrompt(smartRecall?: boolean): string {
   }
 }
 
+function assembleEnvironmentPrompt(): string {
+  const now = new Date()
+  const timeStr = now.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+
+  const ua = navigator.userAgent
+  let osInfo = 'Unknown'
+  if (ua.includes('Windows NT 10')) osInfo = 'Windows 10/11'
+  else if (ua.includes('Windows NT 6.3')) osInfo = 'Windows 8.1'
+  else if (ua.includes('Windows NT 6.1')) osInfo = 'Windows 7'
+  else if (ua.includes('Mac OS X')) {
+    const match = ua.match(/Mac OS X ([\d_]+)/)
+    osInfo = match ? `macOS ${match[1].replace(/_/g, '.')}` : 'macOS'
+  } else if (ua.includes('Linux')) osInfo = 'Linux'
+
+  return [
+    '## 环境信息',
+    '',
+    `- 当前时间: ${timeStr}`,
+    `- 操作系统: ${osInfo}`,
+  ].join('\n')
+}
+
 function assembleRoleConfigPrompt(): string {
   return [
     '## 自进化',
@@ -114,7 +145,9 @@ export async function assembleSystemPrompt(skillsPrompt?: string): Promise<strin
 
   const roleConfigPrompt = assembleRoleConfigPrompt()
 
-  let result = `${processedSoul}\n\n---\n\n${processedHabit}\n\n---\n\n${finalSysprompt}`
+  const environmentPrompt = assembleEnvironmentPrompt()
+
+  let result = `${processedSoul}\n\n---\n\n${processedHabit}\n\n---\n\n${finalSysprompt}\n\n---\n\n${environmentPrompt}`
   if (memoryPrompt) {
     result += `\n\n---\n\n${memoryPrompt}`
   }

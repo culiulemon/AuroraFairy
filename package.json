@@ -10,6 +10,8 @@
     "tauri": "tauri",
     "tauri:dev": "pnpm tauri dev",
     "tauri:build": "tauri build",
+    "tauri:build:x64": "node scripts/prepare-binaries.mjs x86_64 && pnpm tauri build --target x86_64-pc-windows-msvc",
+    "tauri:build:arm64": "node scripts/prepare-binaries.mjs aarch64 && pnpm tauri build --target aarch64-pc-windows-msvc",
     "tauri:icon": "tauri icon",
     "clean": "rimraf dist && cargo clean --manifest-path src-tauri/Cargo.toml"
   },

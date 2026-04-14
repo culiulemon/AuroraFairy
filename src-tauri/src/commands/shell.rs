@@ -96,6 +96,24 @@ fn decode_output(bytes: &[u8]) -> String {
     }
 }
 
+fn needs_cmd_percent_escape(shell_parts: &[&str]) -> bool {
+    shell_parts.get(0).map(|s| *s == "cmd").unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn write_temp_bat(command: &str) -> Result<std::path::PathBuf, String> {
+    let temp_dir = std::env::temp_dir();
+    let file_name = format!("aurora_shell_{}.bat", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis());
+    let bat_path = temp_dir.join(&file_name);
+    let escaped = command.replace('%', "%%");
+    std::fs::write(&bat_path, escaped.as_bytes())
+        .map_err(|e| format!("写入临时批处理文件失败: {}", e))?;
+    Ok(bat_path)
+}
+
 pub async fn shell_execute(command: String, timeout_secs: u64, shell_type: Option<String>) -> Result<String, String> {
     if command.trim().is_empty() {
         return Err("命令不能为空".to_string());
@@ -108,12 +126,33 @@ pub async fn shell_execute(command: String, timeout_secs: u64, shell_type: Optio
     }
 
     let shell_parts = resolve_shell(&shell_type)?;
+    let has_percent = command.contains('%') && needs_cmd_percent_escape(&shell_parts);
+
+    #[cfg(target_os = "windows")]
+    let mut _temp_bat_to_clean: Option<std::path::PathBuf> = None;
+
     let mut cmd = Command::new(shell_parts[0]);
     if shell_parts.len() > 1 {
         cmd.arg(shell_parts[1]);
     }
-    cmd.arg(&command)
-        .stdout(Stdio::piped())
+
+    #[cfg(target_os = "windows")]
+    {
+        if has_percent {
+            let bat_path = write_temp_bat(&command)?;
+            let bat_str = bat_path.to_string_lossy().to_string();
+            cmd.arg(&bat_str);
+            _temp_bat_to_clean = Some(bat_path);
+        } else {
+            cmd.arg(&command);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        cmd.arg(&command);
+    }
+
+    cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
@@ -123,6 +162,11 @@ pub async fn shell_execute(command: String, timeout_secs: u64, shell_type: Optio
         cmd.output()
     )
     .await;
+
+    #[cfg(target_os = "windows")]
+    if let Some(ref bat) = _temp_bat_to_clean {
+        let _ = std::fs::remove_file(bat);
+    }
 
     match output {
         Ok(Ok(output)) => {

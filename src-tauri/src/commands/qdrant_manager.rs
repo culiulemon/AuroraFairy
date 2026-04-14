@@ -81,7 +81,7 @@ fn find_available_port() -> Option<u16> {
 
 fn find_qdrant_binary_with_app(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if let Ok(resource_dir) = app.path().resource_dir() {
-        let binary: PathBuf = resource_dir.join("binaries").join("qdrant").join("qdrant.exe");
+        let binary: PathBuf = resource_dir.join("binaries").join("qdrant.exe");
         if binary.exists() {
             eprintln!("[Qdrant] Found binary via resource_dir: {:?}", binary);
             return Ok(binary);
@@ -97,14 +97,14 @@ fn find_qdrant_binary_with_app(app: &tauri::AppHandle) -> Result<PathBuf, String
         .ok_or("Cannot determine exe directory")?
         .to_path_buf();
 
-    let binary = exe_dir.join("qdrant").join("qdrant.exe");
+    let binary = exe_dir.join("qdrant.exe");
     if binary.exists() {
         eprintln!("[Qdrant] Found binary via exe_dir: {:?}", binary);
         return Ok(binary);
     }
     eprintln!("[Qdrant] exe_dir binary not found at: {:?}", binary);
 
-    let binary2 = exe_dir.join("binaries").join("qdrant").join("qdrant.exe");
+    let binary2 = exe_dir.join("binaries").join("qdrant.exe");
     if binary2.exists() {
         eprintln!("[Qdrant] Found binary via exe_dir/binaries: {:?}", binary2);
         return Ok(binary2);
@@ -114,7 +114,7 @@ fn find_qdrant_binary_with_app(app: &tauri::AppHandle) -> Result<PathBuf, String
     let dev_fallback = exe_dir
         .parent()
         .and_then(|p| p.parent())
-        .map(|p| p.join("binaries").join("qdrant").join("qdrant.exe"));
+        .map(|p| p.join("binaries").join("qdrant.exe"));
     if let Some(ref fallback) = dev_fallback {
         if fallback.exists() {
             eprintln!("[Qdrant] Found binary via dev_fallback: {:?}", fallback);
@@ -124,7 +124,7 @@ fn find_qdrant_binary_with_app(app: &tauri::AppHandle) -> Result<PathBuf, String
     }
 
     Err(format!(
-        "Qdrant binary not found. Searched: resource_dir/binaries/qdrant, exe_dir/qdrant, exe_dir/binaries/qdrant, dev_fallback"
+        "Qdrant binary not found. Searched: resource_dir/binaries/qdrant.exe, exe_dir/qdrant.exe, exe_dir/binaries/qdrant.exe, dev_fallback"
     ))
 }
 
