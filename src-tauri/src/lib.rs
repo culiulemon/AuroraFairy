@@ -384,12 +384,8 @@ pub fn run() {
         }
     }
 
-    let icon_path = std::path::PathBuf::from(COMPILE_MANIFEST_DIR).join("icons/icon.png");
-    let tray_icon = if icon_path.exists() {
-        tauri::image::Image::from_path(&icon_path).ok()
-    } else {
-        None
-    };
+    let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
+        .ok();
 
     tauri::Builder::default()
         .setup(move |app| {
@@ -421,8 +417,11 @@ pub fn run() {
                 match event.id().as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.unminimize();
                             let _ = window.show();
+                            let _ = window.set_always_on_top(true);
                             let _ = window.set_focus();
+                            let _ = window.set_always_on_top(false);
                         }
                     }
                     "quit" => {
@@ -435,8 +434,11 @@ pub fn run() {
                 if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, button_state: tauri::tray::MouseButtonState::Up, .. } = event {
                     let app = tray.app_handle();
                     if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.unminimize();
                         let _ = window.show();
+                        let _ = window.set_always_on_top(true);
                         let _ = window.set_focus();
+                        let _ = window.set_always_on_top(false);
                     }
                 }
             });

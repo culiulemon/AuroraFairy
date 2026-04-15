@@ -15,6 +15,19 @@ let skillEntries: Map<string, SkillEntry> = new Map()
 let skillIndex: SkillIndex | null = null
 let initialized = false
 
+const EVOLVE_COOLDOWN_MS = 5 * 60 * 1000
+const evolveLastRun: Map<string, number> = new Map()
+
+export function shouldEvolve(skillName: string): boolean {
+  const lastRun = evolveLastRun.get(skillName)
+  if (!lastRun) return true
+  return Date.now() - lastRun >= EVOLVE_COOLDOWN_MS
+}
+
+export function markEvolved(skillName: string): void {
+  evolveLastRun.set(skillName, Date.now())
+}
+
 function getCurrentOs(): 'windows' | 'macos' | 'linux' {
   const platform = navigator.platform.toLowerCase()
   if (platform.includes('win')) return 'windows'
@@ -337,10 +350,10 @@ export async function updateSkillMetadata(
   if (!indexEntry || !skillEntry) return
 
   if (updates.description !== undefined && updates.description !== indexEntry.description) {
-    indexEntry.description = updates.description
     try {
       const oldVal = skillEntry.frontmatter.description
       await editFieldInFile(skillEntry.filePath, 'description', oldVal, updates.description)
+      indexEntry.description = updates.description
       skillEntry.frontmatter.description = updates.description
     } catch (e) {
       console.warn('[skillManager] updateSkillMetadata description failed:', e)
@@ -351,7 +364,6 @@ export async function updateSkillMetadata(
     const oldTags = extractTags(skillEntry.frontmatter)
     const newTags = updates.tags
     if (JSON.stringify(oldTags) !== JSON.stringify(newTags)) {
-      indexEntry.tags = newTags
       try {
         const tagField = skillEntry.frontmatter.tags ? 'tags' : null
         const openclawTags = skillEntry.frontmatter.metadata?.openclaw?.tags
@@ -364,6 +376,7 @@ export async function updateSkillMetadata(
             skillEntry.frontmatter.metadata.openclaw.tags = newTags
           }
         }
+        indexEntry.tags = newTags
       } catch (e) {
         console.warn('[skillManager] updateSkillMetadata tags failed:', e)
       }
@@ -374,9 +387,9 @@ export async function updateSkillMetadata(
     const oldHint = extractArgumentHint(skillEntry.frontmatter)
     const newHint = updates.argumentHint
     if (oldHint !== newHint) {
-      indexEntry.argumentHint = newHint
       try {
         await editFieldInFile(skillEntry.filePath, 'argument-hint', oldHint, newHint)
+        indexEntry.argumentHint = newHint
         skillEntry.frontmatter['argument-hint'] = newHint
       } catch (e) {
         console.warn('[skillManager] updateSkillMetadata argumentHint failed:', e)
@@ -513,4 +526,6 @@ export const skillManager = {
   uninstallSkill,
   openSkillsDir,
   getSkillsDir,
+  shouldEvolve,
+  markEvolved,
 }

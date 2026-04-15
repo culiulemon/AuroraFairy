@@ -10,6 +10,103 @@ import { buildSkillsPrompt } from './skills/skillInjector'
 import { evolveSkillMetadata } from './skills/skillEvolver'
 import { getLLMAdapter } from '../stores/fbmStore'
 
+let lastMatchedSkills: import('./skills/types').SkillIndexEntry[] = []
+let lastMatchedConvId: string | null = null
+
+const SHORT_RESPONSE_MAX_LEN = 15
+const SHORT_RESPONSE_PATTERN = /^(好的|好|嗯|是|对|谢谢|感谢|收到|明白|了解|ok|yes|no|不是|没问题|继续|可以|行|这样|那)/i
+
+export function clearSkillCache(): void {
+  lastMatchedSkills = []
+  lastMatchedConvId = null
+}
+
+async function runBackgroundTasks(
+  deps: DispatcherDeps,
+  callbacks: DispatcherCallbacks,
+  params: {
+    convId: string
+    providerId: string
+    content: string
+    activatedSkills: import('./skills/types').SkillIndexEntry[]
+    contextResult: { needsSummaryUpdate: boolean; oldMessagesForSummary: Array<{ role: string; content: string }> }
+    settings: ReturnType<typeof loadSettings>
+    recentMessages: Array<{ role: string; content: string }>
+  }
+): Promise<void> {
+  const { convId, providerId, content, activatedSkills, contextResult, settings: bgSettings, recentMessages } = params
+
+  if (deps.fbmStore.isEnabled() && bgSettings.fbmConsolidationEnabled !== false) {
+    const currentConv = deps.getActiveConversation()
+    const convMessages = currentConv?.messages
+      .filter(m => !m.isLoading)
+      .map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join(''),
+        timestamp: m.timestamp ? new Date(m.timestamp).getTime() : Date.now(),
+      })) || []
+    if (convMessages.length > 0) {
+      const convIdBg = currentConv?.id
+      deps.fbmStore.consolidate(convMessages, convIdBg).then((result: unknown) => {
+        console.log('[Dispatcher] Consolidation result:', result)
+        if (result && convIdBg) {
+          callbacks.onConsolidationComplete(convIdBg)
+        }
+      }).catch((err: unknown) => {
+        console.warn('[Dispatcher] Background consolidation failed:', err)
+      })
+    }
+  }
+
+  if (contextResult.needsSummaryUpdate && contextResult.oldMessagesForSummary.length > 0) {
+    const currentConv = deps.getActiveConversation()
+    triggerSummaryGeneration(
+      convId,
+      contextResult.oldMessagesForSummary,
+      currentConv?.summary,
+      providerId,
+      deps.saveConversationSummary,
+    ).catch((err) => {
+      console.warn('[Dispatcher] Background summary generation failed:', err)
+    })
+  }
+
+  if (activatedSkills.length > 0) {
+    try {
+      const skillLlm = await getLLMAdapter()
+      if (skillLlm) {
+        const currentConv = deps.getActiveConversation()
+        const lastAssistantMsg = currentConv?.messages
+          .filter(m => !m.isLoading && m.role === 'assistant')
+          .map(m => m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join(''))
+          .pop() || ''
+        for (const skill of activatedSkills) {
+          if (!skillManager.shouldEvolve(skill.name)) continue
+          const evolveResult = await evolveSkillMetadata(
+            skill.description,
+            skill.tags,
+            skill.argumentHint,
+            content,
+            lastAssistantMsg,
+            skillLlm,
+            recentMessages
+          )
+          if (evolveResult.needsUpdate) {
+            await skillManager.updateSkillMetadata(skill.name, {
+              description: evolveResult.newDescription || undefined,
+              tags: evolveResult.newTags || undefined,
+              argumentHint: evolveResult.newArgumentHint || undefined,
+            })
+          }
+          skillManager.markEvolved(skill.name)
+        }
+      }
+    } catch (err) {
+      console.warn('[Dispatcher] Skill description evolution failed:', err)
+    }
+  }
+}
+
 export interface DispatcherCallbacks {
   onChunk: (chunk: string) => void
   onReasoningChunk: (reasoning: string) => void
@@ -105,8 +202,16 @@ export async function dispatchMessage(
     try {
       const skillLlm = await getLLMAdapter()
       if (skillLlm) {
-        const recentForSkill = messages.length > 4 ? messages.slice(-4) : messages
-        activatedSkills = await skillManager.matchSkills(content, skillLlm, recentForSkill)
+        const isShortResponse = content.length <= SHORT_RESPONSE_MAX_LEN
+          && SHORT_RESPONSE_PATTERN.test(content.trim())
+        if (isShortResponse && lastMatchedConvId === conv.id && lastMatchedSkills.length > 0) {
+          activatedSkills = lastMatchedSkills
+        } else {
+          const recentForSkill = messages.length > 4 ? messages.slice(-4) : messages
+          activatedSkills = await skillManager.matchSkills(content, skillLlm, recentForSkill)
+          lastMatchedSkills = activatedSkills
+          lastMatchedConvId = conv.id
+        }
         if (activatedSkills.length > 0) {
           const activatedNames = activatedSkills.map(s => s.name)
           const contentMap = await skillManager.getSkillContentMap(activatedNames)
@@ -221,69 +326,14 @@ export async function dispatchMessage(
   } catch (error) {
     throw error
   } finally {
-    if (deps.fbmStore.isEnabled() && settings.fbmConsolidationEnabled !== false) {
-      const currentConv = deps.getActiveConversation()
-      const convMessages = currentConv?.messages
-        .filter(m => !m.isLoading)
-        .map(m => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join(''),
-          timestamp: m.timestamp ? new Date(m.timestamp).getTime() : Date.now(),
-        })) || []
-      if (convMessages.length > 0) {
-        const convId = currentConv?.id
-        deps.fbmStore.consolidate(convMessages, convId).then((result: unknown) => {
-          console.log('[Dispatcher] Consolidation result:', result)
-          if (result && convId) {
-            callbacks.onConsolidationComplete(convId)
-          }
-        }).catch((err: unknown) => {
-          console.warn('[Dispatcher] Background consolidation failed:', err)
-        })
-      }
-    }
-    if (contextResult.needsSummaryUpdate && contextResult.oldMessagesForSummary.length > 0) {
-      const currentConv = deps.getActiveConversation()
-      triggerSummaryGeneration(
-        conv.id,
-        contextResult.oldMessagesForSummary,
-        currentConv?.summary,
-        provider.id,
-        deps.saveConversationSummary,
-      ).catch((err) => {
-        console.warn('[Dispatcher] Background summary generation failed:', err)
-      })
-    }
-    if (activatedSkills.length > 0) {
-      try {
-        const skillLlm = await getLLMAdapter()
-        if (skillLlm) {
-          const currentConv = deps.getActiveConversation()
-          const lastAssistantMsg = currentConv?.messages
-            .filter(m => !m.isLoading && m.role === 'assistant')
-            .map(m => m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join(''))
-            .pop() || ''
-          for (const skill of activatedSkills) {
-            const evolveResult = await evolveSkillMetadata(
-              skill.description,
-              skill.tags,
-              skill.argumentHint,
-              content,
-              lastAssistantMsg,
-              skillLlm
-            )
-            if (evolveResult.needsUpdate) {
-              await skillManager.updateSkillMetadata(skill.name, {
-                description: evolveResult.newDescription || undefined,
-                tags: evolveResult.newTags || undefined,
-                argumentHint: evolveResult.newArgumentHint || undefined,
-              })
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('[Dispatcher] Skill description evolution failed:', err)
-      }
-    }
+    runBackgroundTasks(deps, callbacks, {
+      convId: conv.id,
+      providerId: provider.id,
+      content,
+      activatedSkills,
+      contextResult,
+      settings,
+      recentMessages: messages.length > 4 ? messages.slice(-4) : messages,
+    })
   }
 }
