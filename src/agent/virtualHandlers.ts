@@ -14,6 +14,7 @@ export interface VirtualHandlerDeps {
 
 let currentUserMessage = ''
 let recentUserMessages: string[] = []
+let conversationContext = ''
 
 export function setCurrentUserMessage(message: string): void {
   currentUserMessage = message
@@ -21,6 +22,10 @@ export function setCurrentUserMessage(message: string): void {
 
 export function setRecentUserMessages(messages: string[]): void {
   recentUserMessages = messages
+}
+
+export function setConversationContext(context: string): void {
+  conversationContext = context
 }
 
 export function registerVirtualHandlers(
@@ -223,7 +228,7 @@ export function registerVirtualHandlers(
     try {
       console.log('[MemorySearch] Searching with query:', query)
       await fbmStore.ensureInit()
-      const result = await fbmStore.retrieve(query)
+      const result = await fbmStore.retrieve(query, conversationContext || undefined)
       console.log('[MemorySearch] Result:', result ? `summary length=${result.summary?.length}, results=${result.results?.length}` : 'null')
       if (!result || !result.summary) {
         return '没有找到相关记忆'

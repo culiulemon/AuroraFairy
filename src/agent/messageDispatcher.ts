@@ -46,7 +46,7 @@ export interface DispatcherDeps {
   fbmStore: {
     isEnabled(): boolean
     ensureInit(): Promise<void>
-    retrieve(query: string | string[]): Promise<any>
+    retrieve(query: string | string[], context?: string): Promise<any>
     getLastRetrieveKeywords(): string[]
     consolidate(
       messages: Array<{ role: string; content: string; timestamp?: number }>,
@@ -58,6 +58,7 @@ export interface DispatcherDeps {
   }
   setCurrentUserMessage: (message: string) => void
   setRecentUserMessages: (messages: string[]) => void
+  setConversationContext: (context: string) => void
   setCurrentTools: (tools: Tool[]) => void
   setCurrentProviderId: (id: string) => void
   saveConversationSummary: (convId: string, summary: string) => void
@@ -86,6 +87,12 @@ export async function dispatchMessage(
       role: m.role as 'user' | 'assistant',
       content: m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join('')
     }))
+
+  const recentMessages = messages.slice(-6)
+  const conversationContext = recentMessages
+    .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`)
+    .join('\n')
+  deps.setConversationContext(conversationContext)
 
   const skillTask = (async (): Promise<{
     skillsPrompt: string
@@ -122,8 +129,8 @@ export async function dispatchMessage(
         .filter(m => !m.isLoading && !m.isGreeting && m.role === 'user')
         .map(m => m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join(''))
         .filter(t => t.length > 0)
-      const recentUserMessages = [...userMessages, content].slice(-3)
-      const result = await deps.fbmStore.retrieve(recentUserMessages)
+      const recentUserMessages = userMessages.slice(-3)
+      const result = await deps.fbmStore.retrieve(recentUserMessages, conversationContext)
       if (result && result.summary && result.summary !== '没有找到相关记忆') {
         const keywords = deps.fbmStore.getLastRetrieveKeywords()
         let memoryText = result.summary

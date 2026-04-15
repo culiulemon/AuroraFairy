@@ -102,7 +102,7 @@ import { initThemeSettings } from '../composables/useTheme'
 import { channelRegistry } from '../agent/channelRegistry'
 import { fairyDo } from '../agent/fairyDo'
 import { fbmStore } from '../stores/fbmStore'
-import { setCurrentUserMessage, setRecentUserMessages } from '../agent/virtualHandlers'
+import { setCurrentUserMessage, setRecentUserMessages, setConversationContext } from '../agent/virtualHandlers'
 const SettingsPage = defineAsyncComponent(() => import('./SettingsPage.vue'))
 const PersonalizationPage = defineAsyncComponent(() => import('./PersonalizationPage.vue'))
 const AgentToolsPage = defineAsyncComponent(() => import('./AgentToolsPage.vue'))
@@ -136,6 +136,7 @@ onMounted(() => {
     fairyDo,
     setCurrentUserMessage,
     setRecentUserMessages,
+    setConversationContext,
     setCurrentTools: () => {},
     setCurrentProviderId: () => {},
     saveConversationSummary: () => {},

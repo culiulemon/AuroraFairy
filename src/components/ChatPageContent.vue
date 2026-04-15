@@ -49,7 +49,7 @@ import ToolApprovalDialog from './ToolApprovalDialog.vue'
 import { useConversationStore } from '../stores/useConversationStore'
 import { loadTtsSettings } from '../stores/settings'
 import { fairyDo } from '../agent/fairyDo'
-import { registerVirtualHandlers, setCurrentUserMessage, setRecentUserMessages } from '../agent/virtualHandlers'
+import { registerVirtualHandlers, setCurrentUserMessage, setRecentUserMessages, setConversationContext } from '../agent/virtualHandlers'
 import { generateConversationTitle } from '../stores/chat'
 import { useTTS } from '../composables/useTTS'
 import { fbmStore } from '../stores/fbmStore'
@@ -215,6 +215,7 @@ const handleSendMessage = async (content: string) => {
       fairyDo,
       setCurrentUserMessage,
       setRecentUserMessages,
+      setConversationContext,
       setCurrentTools: (tools) => { currentTools = tools },
       setCurrentProviderId: (id) => { currentProviderId = id },
       saveConversationSummary: (convId: string, summary: string) => {

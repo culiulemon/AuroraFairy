@@ -236,14 +236,14 @@ export const fbmStore = {
     }
   },
 
-  async retrieve(query: string | string[]): Promise<any> {
+  async retrieve(query: string | string[], context?: string): Promise<any> {
     if (!this.isReady()) {
       await this.ensureInit()
     }
     if (!fbm) return null
 
     try {
-      const result = await fbm.retrieve(query)
+      const result = await fbm.retrieve(query, context)
       lastRetrieveKeywords = result?.keywords ?? []
       return result
     } catch (err) {
