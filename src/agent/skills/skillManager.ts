@@ -206,14 +206,15 @@ export async function loadAllSkillsToManager(): Promise<void> {
 
 export async function matchSkillsForMessage(
   userMessage: string,
-  llm: LLMAdapter
+  llm: LLMAdapter,
+  recentMessages?: Array<{ role: string; content: string }>
 ): Promise<SkillIndexEntry[]> {
   if (!initialized) {
     await loadAllSkillsToManager()
   }
   if (!skillIndex) return []
   const allEntries = Object.values(skillIndex.entries)
-  return selectSkills(userMessage, allEntries, llm)
+  return selectSkills(userMessage, allEntries, llm, recentMessages)
 }
 
 export async function getSkillContent(skillName: string): Promise<string> {

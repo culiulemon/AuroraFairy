@@ -98,7 +98,8 @@ export async function dispatchMessage(
     try {
       const skillLlm = await getLLMAdapter()
       if (skillLlm) {
-        activatedSkills = await skillManager.matchSkills(content, skillLlm)
+        const recentForSkill = messages.length > 4 ? messages.slice(-4) : messages
+        activatedSkills = await skillManager.matchSkills(content, skillLlm, recentForSkill)
         if (activatedSkills.length > 0) {
           const activatedNames = activatedSkills.map(s => s.name)
           const contentMap = await skillManager.getSkillContentMap(activatedNames)

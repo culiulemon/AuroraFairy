@@ -6,8 +6,8 @@ const SKILL_SELECT_PROMPT = `你是一个技能选择助手。以下是当前可
 ## 可用技能
 {indexText}
 
-## 用户消息
-{userMessage}
+## 对话上下文
+{contextSection}
 
 ## 输出格式
 输出JSON：
@@ -22,8 +22,23 @@ const SKILL_SELECT_PROMPT = `你是一个技能选择助手。以下是当前可
 - 如果没有任何相关技能，返回空数组
 - 宁可多选不要漏选
 - 参考每个技能的标签(tags)和使用示例(argument-hint)来判断相关性
+- 结合对话上下文理解用户意图，追问消息可能需要关联之前的技能
 
 只输出JSON，不要输出任何其他内容。`
+
+function buildContextSection(userMessage: string, recentMessages?: Array<{ role: string; content: string }>): string {
+  if (!recentMessages || recentMessages.length === 0) {
+    return `用户消息:\n${userMessage}`
+  }
+  const lines: string[] = []
+  for (const msg of recentMessages) {
+    const prefix = msg.role === 'user' ? '用户' : '助手'
+    const content = msg.content.length > 200 ? msg.content.slice(0, 200) + '...' : msg.content
+    lines.push(`${prefix}: ${content}`)
+  }
+  lines.push(`用户消息: ${userMessage}`)
+  return lines.join('\n')
+}
 
 export function buildSkillIndexText(entries: SkillIndexEntry[]): string {
   return entries
@@ -59,15 +74,17 @@ function parseSelectedSkills(content: string): string[] {
 export async function selectSkills(
   userMessage: string,
   entries: SkillIndexEntry[],
-  llm: LLMAdapter
+  llm: LLMAdapter,
+  recentMessages?: Array<{ role: string; content: string }>
 ): Promise<SkillIndexEntry[]> {
   const eligible = entries.filter((e) => e.enabled && e.gatingStatus.eligible)
   if (eligible.length === 0) return []
 
   const indexText = buildSkillIndexText(eligible)
+  const contextSection = buildContextSection(userMessage, recentMessages)
   const prompt = SKILL_SELECT_PROMPT
     .replace('{indexText}', indexText)
-    .replace('{userMessage}', userMessage)
+    .replace('{contextSection}', contextSection)
 
   try {
     const messages: LLMMessage[] = [{ role: 'system', content: prompt }]
