@@ -146,12 +146,14 @@ export const sysTools: Tool[] = [
 export const memorySearchTool: Tool = {
   id: 'sys-memory_search',
   name: '记忆搜索',
-  description: '搜索过往记忆，获取与查询相关的记忆片段。当你需要回忆之前对话的内容、用户偏好、项目背景等信息时调用此工具。',
+  description: '搜索过往记忆，获取与查询相关的记忆片段。当你需要回忆之前对话的内容、用户偏好、项目背景等信息时调用此工具。不传 query 时自动使用最近对话内容搜索；传入 query 时按你构造的查询词搜索。',
   logo: '',
   logoType: undefined,
   invokeName: 'memory_search',
   filePath: '',
-  parameters: [],
+  parameters: [
+    { name: 'query', type: 'string', description: '自定义搜索查询词。不传则自动使用最近对话内容搜索。当你想搜索特定主题的记忆时，请用简短的描述性语句，例如"用户关于React项目的讨论"或"旅行计划相关记忆"', required: false },
+  ],
   executor: 'memory_search' as any,
   code: undefined,
   language: 'typescript',

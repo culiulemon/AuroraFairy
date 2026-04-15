@@ -9,6 +9,7 @@ import { skillManager } from './skills/skillManager'
 import { buildSkillsPrompt } from './skills/skillInjector'
 import { evolveSkillMetadata } from './skills/skillEvolver'
 import { getLLMAdapter } from '../stores/fbmStore'
+import { memoryReorganizer } from '../stores/memoryReorganizer'
 
 let lastMatchedSkills: import('./skills/types').SkillIndexEntry[] = []
 let lastMatchedConvId: string | null = null
@@ -167,6 +168,8 @@ export async function dispatchMessage(
   callbacks: DispatcherCallbacks,
   signal?: AbortSignal
 ): Promise<{ content: string; iterations: number }> {
+  memoryReorganizer.onConversationSent()
+
   const conv = deps.getActiveConversation()
   if (!conv) throw new Error('No active conversation')
 
@@ -271,7 +274,7 @@ export async function dispatchMessage(
   const userTools = await loadAllTools()
   const filtered = userTools.filter(t => !t.id.startsWith('sys-') && !t.id.startsWith('builtin-'))
   const allTools: Tool[] = [...sysTools, ...filtered]
-  if (deps.fbmStore.isEnabled() && settings.fbmSmartRecall !== false) {
+  if (deps.fbmStore.isEnabled()) {
     allTools.push(memorySearchTool)
   }
   allTools.push(roleConfigTool)

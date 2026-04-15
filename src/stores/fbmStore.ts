@@ -3,6 +3,7 @@ import type { ApiProvider } from './settings.js'
 import type { EmbeddingAdapter, LLMAdapter } from '../fbm/src/types/adapter.js'
 import { loadMiscSettings, getEffectiveWorkingDir } from './miscSettings.js'
 import { invoke } from '@tauri-apps/api/core'
+import { memoryReorganizer } from './memoryReorganizer.js'
 
 import soulRaw from '../fbm/templates/SOUL.md?raw'
 import syspromptRaw from '../fbm/templates/SYSPROMPT.md?raw'
@@ -126,6 +127,8 @@ async function doInit(
     fbm = new mod.FBM(config, llm, embedding)
     await fbm.init()
 
+    memoryReorganizer.init(fbm.getReorganizer())
+
     console.log('[FBM] Initialization complete, FBM is ready. embedding dimension:', embedding.getDimension())
   } catch (err) {
     console.warn('[FBM] Initialization failed:', err)
@@ -207,6 +210,7 @@ export const fbmStore = {
   },
 
   async shutdown(): Promise<void> {
+    memoryReorganizer.destroy()
     if (!fbm) return
     try {
       await fbm.shutdown()
@@ -281,6 +285,9 @@ export const fbmStore = {
       lastConsolidatedMsgCount = messages.length
       const result = await fbm.consolidate(newMessages)
       console.log('[FBM] consolidate result:', result)
+      if (result && (result.created > 0 || result.updated > 0)) {
+        memoryReorganizer.markDirty()
+      }
       return result
     } catch (err) {
       console.warn('[FBM] consolidate error:', err)
@@ -441,4 +448,9 @@ export const fbmStore = {
       return COREFILE_TEMPLATES[fileName] ?? null
     }
   },
+
+  startReorganization: memoryReorganizer.start,
+  cancelReorganization: memoryReorganizer.cancel,
+  isReorganizing: memoryReorganizer.isReorganizing,
+  reorganizeProgress: memoryReorganizer.progress,
 }

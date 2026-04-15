@@ -220,16 +220,20 @@ export function registerVirtualHandlers(
     return JSON.stringify({ success: false, error: `未知的浏览器操作: ${action}` })
   })
 
-  fairyDo.registerVirtualHandler('memory_search', async (_input) => {
-    const query = recentUserMessages.length > 0 ? recentUserMessages : (currentUserMessage ? [currentUserMessage] : [])
+  fairyDo.registerVirtualHandler('memory_search', async (input) => {
+    const customQuery = typeof input.query === 'string' && input.query.trim() ? input.query.trim() : null
+    let query: string[]
+    if (customQuery) {
+      query = [customQuery]
+    } else {
+      query = recentUserMessages.length > 0 ? recentUserMessages : (currentUserMessage ? [currentUserMessage] : [])
+    }
     if (query.length === 0) {
-      return '错误: 未获取到用户消息'
+      return '错误: 未获取到用户消息且未提供查询词'
     }
     try {
-      console.log('[MemorySearch] Searching with query:', query)
       await fbmStore.ensureInit()
       const result = await fbmStore.retrieve(query, conversationContext || undefined)
-      console.log('[MemorySearch] Result:', result ? `summary length=${result.summary?.length}, results=${result.results?.length}` : 'null')
       if (!result || !result.summary) {
         return '没有找到相关记忆'
       }

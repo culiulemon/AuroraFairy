@@ -73,6 +73,28 @@
           </button>
           <button
             class="stat-btn"
+            @click="handleReorganize"
+            :disabled="isReorganizing"
+            v-if="fbmConfig.enabled"
+          >
+            <svg v-if="isReorganizing" class="spinning" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12a9 9 0 11-6.219-8.56"></path>
+            </svg>
+            <svg v-else viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+            {{ isReorganizing ? '整理中...' : '整理' }}
+          </button>
+          <button
+            v-if="isReorganizing"
+            class="stat-btn"
+            @click="handleCancelReorganize"
+          >
+            取消
+          </button>
+          <button
+            class="stat-btn"
             @click="handleReindex"
             :disabled="isReindexing"
           >
@@ -116,6 +138,12 @@
           <polyline points="20,6 9,17 4,12"></polyline>
         </svg>
         {{ consolidateResult }}
+      </div>
+      <div v-if="isReorganizing" class="reorganize-progress">
+        <div class="progress-bar">
+          <div class="progress-fill" :style="{ width: reorganizeProgressPct }"></div>
+        </div>
+        <span class="progress-text">{{ reorganizeProgressText }}</span>
       </div>
 
       <div class="search-bar">
@@ -332,6 +360,22 @@ const consolidateResult = ref('')
 const reindexResult = ref<string | null>(null)
 const showDetail = ref(false)
 const detailItem = ref<MemoryItem | null>(null)
+
+const isReorganizing = fbmStore.isReorganizing
+const reorganizeProgress = fbmStore.reorganizeProgress
+
+const reorganizeProgressPct = computed(() => {
+  const p = reorganizeProgress.value
+  if (!p || p.total === 0) return '0%'
+  return `${Math.round((p.current / p.total) * 100)}%`
+})
+
+const reorganizeProgressText = computed(() => {
+  const p = reorganizeProgress.value
+  if (!p) return ''
+  const phaseLabel = p.phase === 'analyzing' ? '分析' : p.phase === 'executing' ? '执行' : '扫描'
+  return `${phaseLabel} (${p.current}/${p.total}) ${p.detail}`
+})
 const detailContent = ref('')
 const showDeleteConfirm = ref(false)
 const deletingItem = ref<MemoryItem | null>(null)
@@ -555,6 +599,24 @@ async function handleConsolidate() {
   } finally {
     isConsolidating.value = false
   }
+}
+
+async function handleReorganize() {
+  try {
+    const result = await fbmStore.startReorganization()
+    if (result) {
+      consolidateResult.value = `整理完成: 拆分 ${result.splits} 个, 重分类 ${result.reclassifications} 个, 合并 ${result.merges} 个`
+      if (result.errors > 0) consolidateResult.value += `, 错误 ${result.errors} 个`
+      await loadMemories()
+      await refreshStats()
+    }
+  } catch (e) {
+    consolidateResult.value = `整理失败: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+function handleCancelReorganize() {
+  fbmStore.cancelReorganization()
 }
 
 watch(showFbmConfig, (val) => {
@@ -998,6 +1060,34 @@ onMounted(async () => {
   color: var(--color-accent-success);
   font-size: 13px;
   font-weight: 600;
+}
+
+.reorganize-progress {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-accent);
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
 }
 
 .spinning {
