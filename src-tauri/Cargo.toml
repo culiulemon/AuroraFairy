@@ -45,4 +45,5 @@ bytes = "1"
 flate2 = "1"
 dirs = "5"
 qrcode = "0.14"
+zip = "2"
 

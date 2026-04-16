@@ -6,6 +6,81 @@ import { loadSettings } from '../stores/settings.js'
 const FRONTMATTER_REGEX = /^---\n[\s\S]*?\n---\n*/
 const COMMENT_BLOCK_REGEX = /<!--[\s\S]*?-->/g
 
+let fapCapabilitiesCache: string | null = null
+let fapCacheTimestamp = 0
+const FAP_CACHE_TTL = 5 * 60 * 1000
+
+export function invalidateFapCache() {
+  fapCapabilitiesCache = null
+  fapCacheTimestamp = 0
+}
+
+async function assembleFapPrompt(): Promise<string> {
+  const now = Date.now()
+  if (fapCapabilitiesCache && (now - fapCacheTimestamp) < FAP_CACHE_TTL) {
+    return fapCapabilitiesCache
+  }
+
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const result = await invoke('fap_list') as any
+    const packages = result?.packages
+    if (!Array.isArray(packages) || packages.length === 0) {
+      fapCapabilitiesCache = ''
+      fapCacheTimestamp = now
+      return ''
+    }
+
+    const lines: string[] = [
+      '## 触桥应用 (FAP)',
+      '',
+      '以下是通过触桥协议可用的已安装 FAP 应用。你可以通过 `fap_bridge` 工具调用这些应用的动作。',
+      '',
+    ]
+
+    for (const pkg of packages) {
+      lines.push(`### ${pkg.name} (${pkg.package}) v${pkg.version}`)
+      const caps = pkg.capabilities
+      if (caps && typeof caps === 'object') {
+        for (const [, domains] of Object.entries(caps)) {
+          if (!Array.isArray(domains)) continue
+          for (const domain of domains) {
+            const domainName = domain['名称'] || '未知'
+            lines.push(`- 能力域「${domainName}」:`)
+            const actions = domain['动作']
+            if (Array.isArray(actions)) {
+              for (const action of actions) {
+                const actionName = action['名称'] || '未知'
+                const params = action['参数']
+                let paramDesc = ''
+                if (params && typeof params === 'object') {
+                  const paramNames = Object.keys(params)
+                  if (paramNames.length > 0) {
+                    paramDesc = ` 参数: ${paramNames.join(', ')}`
+                  }
+                }
+                lines.push(`  - ${actionName}${paramDesc}`)
+              }
+            }
+          }
+        }
+      }
+      lines.push('')
+    }
+
+    lines.push('调用方式: 使用 `fap_bridge` 工具，action="call"，module=包标识符，channel=能力域名称，fap_action=动作名称，params=JSON参数。')
+
+    const prompt = lines.join('\n')
+    fapCapabilitiesCache = prompt
+    fapCacheTimestamp = now
+    return prompt
+  } catch {
+    fapCapabilitiesCache = ''
+    fapCacheTimestamp = now
+    return ''
+  }
+}
+
 function stripFrontmatter(content: string): string {
   return content.replace(FRONTMATTER_REGEX, '').trim()
 }
@@ -147,12 +222,17 @@ export async function assembleSystemPrompt(skillsPrompt?: string): Promise<strin
 
   const environmentPrompt = assembleEnvironmentPrompt()
 
+  const fapPrompt = await assembleFapPrompt()
+
   let result = `${processedSoul}\n\n---\n\n${processedHabit}\n\n---\n\n${finalSysprompt}\n\n---\n\n${environmentPrompt}`
   if (memoryPrompt) {
     result += `\n\n---\n\n${memoryPrompt}`
   }
   if (skillsPrompt) {
     result += `\n\n---\n\n${skillsPrompt}`
+  }
+  if (fapPrompt) {
+    result += `\n\n---\n\n${fapPrompt}`
   }
   if (roleConfigPrompt) {
     result += `\n\n---\n\n${roleConfigPrompt}`

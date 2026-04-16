@@ -61,6 +61,9 @@
       <template v-else-if="activeNav === 'agent' && activeSubNav === 'memory'">
         <AgentMemoryPage @back="handleNavChange('agent')" />
       </template>
+      <template v-else-if="activeNav === 'agent' && activeSubNav === 'touchbridge'">
+        <TouchBridgePage @back="handleNavChange('agent')" />
+      </template>
       <template v-else-if="activeNav === 'settings' && activeSubNav === 'personalization'">
         <PersonalizationPage @back="handleBackFromSettings" />
       </template>
@@ -114,6 +117,7 @@ const AgentMemoryPage = defineAsyncComponent(() => import('./AgentMemoryPage.vue
 const RolePage = defineAsyncComponent(() => import('./RolePage.vue'))
 const SkillsPage = defineAsyncComponent(() => import('./SkillsPage.vue'))
 const ChannelsPage = defineAsyncComponent(() => import('./ChannelsPage.vue'))
+const TouchBridgePage = defineAsyncComponent(() => import('./TouchBridgePage.vue'))
 
 const activeNav = ref('chat')
 const activeSubNav = ref('chat-list')
@@ -170,7 +174,7 @@ const getHeaderTitle = (): string => {
   const titleMap: Record<string, Record<string, string>> = {
     chat: { 'chat-list': '对话' },
     control: { channels: '渠道管理', 'scheduled-tasks': '定时任务', life: '生命管理', 'security-rules': '安全规则' },
-    agent: { workspace: '工作区', skills: '技能管理', role: '角色', tools: '工具管理', memory: '记忆' },
+    agent: { workspace: '工作区', skills: '技能管理', role: '角色', tools: '工具管理', memory: '记忆', touchbridge: '我的应用' },
     settings: { models: '模型设置', 'local-models': '本地模型', personalization: '个性化', misc: '杂项', about: '关于' }
   }
   return titleMap[activeNav.value]?.[activeSubNav.value] || ''
@@ -209,7 +213,7 @@ const getPlaceholderText = (): string => {
     life: '生命管理',
     workspace: '工作区',
     skills: '技能管理',
-    touchbridge: '触桥管理',
+    touchbridge: '应用管理',
     models: '模型设置',
     personalization: '个性化'
   }

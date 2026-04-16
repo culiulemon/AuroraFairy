@@ -20,4 +20,5 @@ pub use local_models::{
     deploy_model, stop_model, delete_model, get_model_info, install_ollama, get_ollama_models,
 };
 pub use browser::{BrowserManager, browser_start, browser_execute, browser_stop};
+pub mod fap;
 

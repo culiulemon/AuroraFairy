@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { ToolParameter, Tool } from '../types/tool'
 import type { SecurityRule } from '../types/security'
 
-export type VirtualToolName = 'todo_write' | 'task_dispatch' | 'browser'
+export type VirtualToolName = 'todo_write' | 'task_dispatch' | 'browser' | 'fap_bridge'
 
 export type AggregateToolName = 'file_manager' | 'task_manager' | 'browser'
 

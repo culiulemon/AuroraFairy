@@ -1,6 +1,6 @@
 import { executeReActLoop } from './reactLoop'
 import { assembleSystemPrompt } from './systemPromptAssembler'
-import { sysTools, memorySearchTool, roleConfigTool } from './FairySysTools'
+import { sysTools, memorySearchTool, roleConfigTool, fapBridgeTool } from './FairySysTools'
 import { loadAllTools } from '../stores/toolsStore'
 import { loadSettings } from '../stores/settings'
 import type { Tool } from '../types/tool'
@@ -278,6 +278,7 @@ export async function dispatchMessage(
     allTools.push(memorySearchTool)
   }
   allTools.push(roleConfigTool)
+  allTools.push(fapBridgeTool)
 
   deps.fairyDo.registerAll(allTools)
   deps.setCurrentTools(allTools)

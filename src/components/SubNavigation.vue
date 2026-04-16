@@ -62,7 +62,7 @@ const navGroups: NavGroup[] = [
       { id: 'skills', label: '技能' },
       { id: 'tools', label: '工具' },
       { id: 'memory', label: '记忆' },
-      { id: 'touchbridge', label: '触桥' }
+      { id: 'touchbridge', label: '应用管理' }
     ]
   },
   {

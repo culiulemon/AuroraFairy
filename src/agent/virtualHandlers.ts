@@ -281,4 +281,62 @@ export function registerVirtualHandlers(
 
     return '错误: 未知的 action，支持 get 或 update'
   })
+
+  fairyDo.registerVirtualHandler('fap_bridge', async (input) => {
+    const action = input.action as string
+
+    if (action === 'list') {
+      try {
+        const result = await invoke('fap_list') as Record<string, unknown>
+        return JSON.stringify(result, null, 2)
+      } catch (e) {
+        return JSON.stringify({ success: false, error: String(e) })
+      }
+    }
+
+    async function ensureBridgeAndSend(message: string): Promise<string> {
+      try {
+        const result = await invoke('fap_bridge_send', { message }) as Record<string, unknown>
+        return JSON.stringify(result, null, 2)
+      } catch (e) {
+        const errStr = String(e)
+        if (errStr.includes('触桥未启动')) {
+          await invoke('fap_bridge_start')
+          const retryResult = await invoke('fap_bridge_send', { message }) as Record<string, unknown>
+          return JSON.stringify(retryResult, null, 2)
+        }
+        return JSON.stringify({ success: false, error: errStr })
+      }
+    }
+
+    if (action === 'hello') {
+      const module = input.module as string
+      if (!module) {
+        return JSON.stringify({ success: false, error: 'hello 操作需要 module 参数' })
+      }
+      const message = `bridge://hello\x1F${module}#`
+      return await ensureBridgeAndSend(message)
+    }
+
+    if (action === 'call') {
+      const module = input.module as string
+      const channel = input.channel as string
+      const fapAction = input.fap_action as string
+      if (!module || !channel || !fapAction) {
+        return JSON.stringify({ success: false, error: 'call 操作需要 module、channel、fap_action 参数' })
+      }
+      let paramsStr = '{}'
+      if (input.params) {
+        if (typeof input.params === 'string') {
+          paramsStr = input.params
+        } else {
+          paramsStr = JSON.stringify(input.params)
+        }
+      }
+      const message = `bridge://call\x1F${module}\x1F${channel}\x1F${fapAction}#${paramsStr}`
+      return await ensureBridgeAndSend(message)
+    }
+
+    return JSON.stringify({ success: false, error: '未知的 action，支持 list、hello 或 call' })
+  })
 }

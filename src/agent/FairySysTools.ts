@@ -161,6 +161,38 @@ export const memorySearchTool: Tool = {
   updatedAt: '2024-01-01T00:00:00.000Z'
 }
 
+export const fapBridgeTool: Tool = {
+  id: 'sys-fap_bridge',
+  name: '触桥',
+  description: `通过触桥协议与已安装的 FAP (FairyAction Package) 应用交互。通过 action 参数指定操作类型。
+- list: 列出所有已安装的 FAP 包及其能力描述
+- hello: 查询指定 FAP 包的能力描述（需要 module 参数）
+- call: 调用指定 FAP 包中的动作（需要 module、channel、fap_action 参数，可选 params）
+
+FAP 应用是扩展 AI Agent 能力的工具包，每个包包含一个或多个能力域，每个域下有多个动作。调用前先用 list 或 hello 查询可用能力。
+
+调用示例:
+- 列出所有包: {"action": "list"}
+- 查询包能力: {"action": "hello", "module": "com.example.mytool"}
+- 调用动作: {"action": "call", "module": "com.example.mytool", "channel": "图片转换", "fap_action": "png2jpg", "params": "{\"输入\": \"a.png\"}"}`,
+  logo: '',
+  logoType: undefined,
+  invokeName: 'fap_bridge',
+  filePath: '',
+  parameters: [
+    { name: 'action', type: 'string', description: '操作类型: list|hello|call', required: true },
+    { name: 'module', type: 'string', description: 'FAP 包标识符，如 com.example.mytool（action=hello/call 时使用）', required: false },
+    { name: 'channel', type: 'string', description: '能力域名称（action=call 时使用）', required: false },
+    { name: 'fap_action', type: 'string', description: '动作名称（action=call 时使用）', required: false },
+    { name: 'params', type: 'string', description: 'JSON 格式的动作参数（action=call 时使用，如 {"输入":"a.png","质量":90}）', required: false },
+  ],
+  executor: 'fap_bridge' as any,
+  code: undefined,
+  language: 'typescript',
+  createdAt: '2024-01-01T00:00:00.000Z',
+  updatedAt: '2024-01-01T00:00:00.000Z'
+}
+
 export const roleConfigTool: Tool = {
   id: 'sys-role_config',
   name: '角色配置',

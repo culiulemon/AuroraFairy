@@ -24,6 +24,7 @@ use commands::fbm_fs::{
 use commands::qdrant_manager::{QdrantState, qdrant_start, qdrant_stop, qdrant_status};
 use commands::feishu::{FeishuManager, feishu_connect, feishu_disconnect, feishu_reply_message, feishu_get_status};
 use commands::weixin::{WeixinManager, weixin_get_qrcode, weixin_connect, weixin_disconnect, weixin_reply_message, weixin_get_status, weixin_has_credentials};
+use commands::fap::{BridgeManager, fap_bridge_start, fap_bridge_send, fap_bridge_stop, fap_install, fap_uninstall, fap_list};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct AppConfig {
@@ -464,6 +465,7 @@ pub fn run() {
         .manage(Mutex::new(QdrantState::new()))
         .manage(std::sync::Arc::new(tokio::sync::Mutex::new(FeishuManager::new())))
         .manage(std::sync::Arc::new(tokio::sync::Mutex::new(WeixinManager::new())))
+        .manage(BridgeManager::new())
         .invoke_handler(tauri::generate_handler![
             scan_tools,
             save_tool_file,
@@ -525,7 +527,13 @@ pub fn run() {
             weixin_disconnect,
             weixin_reply_message,
             weixin_get_status,
-            weixin_has_credentials
+            weixin_has_credentials,
+            fap_bridge_start,
+            fap_bridge_send,
+            fap_bridge_stop,
+            fap_install,
+            fap_uninstall,
+            fap_list
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

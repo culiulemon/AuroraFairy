@@ -58,21 +58,6 @@
         <div class="stat-actions">
           <button
             class="stat-btn"
-            @click="handleConsolidate"
-            :disabled="isConsolidating"
-            v-if="fbmConfig.enabled"
-          >
-            <svg v-if="isConsolidating" class="spinning" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 12a9 9 0 11-6.219-8.56"></path>
-            </svg>
-            <svg v-else viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 20h9"></path>
-              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-            </svg>
-            {{ isConsolidating ? '整合中' : '整合' }}
-          </button>
-          <button
-            class="stat-btn"
             @click="handleReorganize"
             :disabled="isReorganizing"
             v-if="fbmConfig.enabled"
@@ -133,11 +118,11 @@
         </svg>
         {{ reindexResult }}
       </div>
-      <div v-if="consolidateResult" class="result-msg">
+      <div v-if="operationResult" class="result-msg">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="20,6 9,17 4,12"></polyline>
         </svg>
-        {{ consolidateResult }}
+        {{ operationResult }}
       </div>
       <div v-if="isReorganizing" class="reorganize-progress">
         <div class="progress-bar">
@@ -354,9 +339,8 @@ const isClearing = ref(false)
 const showReindexConfirm = ref(false)
 const showClearConfirm = ref(false)
 const isDeleting = ref(false)
-const isConsolidating = ref(false)
 const isRefreshingStats = ref(false)
-const consolidateResult = ref('')
+const operationResult = ref('')
 const reindexResult = ref<string | null>(null)
 const showDetail = ref(false)
 const detailItem = ref<MemoryItem | null>(null)
@@ -582,36 +566,17 @@ async function doClearVectors() {
   }
 }
 
-async function handleConsolidate() {
-  isConsolidating.value = true
-  consolidateResult.value = ''
-  try {
-    const result = await fbmStore.consolidate([])
-    if (result) {
-      consolidateResult.value = `整合完成: 创建 ${result.created} 条, 更新 ${result.updated} 条, 删除 ${result.deleted} 条, 跳过 ${result.skipped} 条`
-      await loadMemories()
-      await refreshStats()
-    } else {
-      consolidateResult.value = '整合完成，未提取到新记忆'
-    }
-  } catch (e) {
-    consolidateResult.value = `整合失败: ${e instanceof Error ? e.message : String(e)}`
-  } finally {
-    isConsolidating.value = false
-  }
-}
-
 async function handleReorganize() {
   try {
     const result = await fbmStore.startReorganization()
     if (result) {
-      consolidateResult.value = `整理完成: 拆分 ${result.splits} 个, 重分类 ${result.reclassifications} 个, 合并 ${result.merges} 个`
-      if (result.errors > 0) consolidateResult.value += `, 错误 ${result.errors} 个`
+      operationResult.value = `整理完成: 拆分 ${result.splits} 个, 重分类 ${result.reclassifications} 个, 合并 ${result.merges} 个`
+      if (result.errors > 0) operationResult.value += `, 错误 ${result.errors} 个`
       await loadMemories()
       await refreshStats()
     }
   } catch (e) {
-    consolidateResult.value = `整理失败: ${e instanceof Error ? e.message : String(e)}`
+    operationResult.value = `整理失败: ${e instanceof Error ? e.message : String(e)}`
   }
 }
 
