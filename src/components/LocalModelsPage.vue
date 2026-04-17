@@ -161,15 +161,12 @@
               <div class="download-progress-area" v-if="isDownloading || downloadProgress">
                 <div class="download-info">
                   <span class="download-file" :class="{ 'download-error': downloadProgress?.status === 'error' }">
-                    {{ downloadProgress?.status === 'error' ? '下载失败' : (downloadProgress?.status === 'cancelled' ? '已取消' : (downloadProgress?.current_file || '准备下载...')) }}
+                    {{ downloadProgress?.status === 'error' ? '下载失败' : (downloadProgress?.status === 'cancelled' ? '已取消' : (downloadProgress?.message || '准备下载...')) }}
                   </span>
                   <span v-if="downloadProgress?.status !== 'error' && downloadProgress?.status !== 'cancelled'" class="download-percent">{{ downloadProgress?.progress_percent || 0 }}%</span>
                 </div>
                 <div class="progress-bar" v-if="downloadProgress?.status !== 'error' && downloadProgress?.status !== 'cancelled'">
                   <div class="progress-fill" :style="{ width: (downloadProgress?.progress_percent || 0) + '%' }"></div>
-                </div>
-                <div class="download-log" v-if="downloadProgress?.message && downloadProgress.message !== downloadProgress.current_file">
-                  <span>{{ downloadProgress.message }}</span>
                 </div>
                 <div class="download-actions-row">
                   <button v-if="isDownloading" class="cancel-download-btn" @click="handleCancelDownload">取消</button>

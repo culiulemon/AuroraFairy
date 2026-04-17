@@ -11,41 +11,59 @@ os.environ["TQDM_DISABLE"] = "1"
 
 class DownloadProgressPrinter:
     _lock = threading.Lock()
-    _file_index = 0
     _progress_file = None
     _total_downloaded = 0
     _total_files = 0
     _total_file_size = 0
+    _completed_files = 0
+    _last_write_time = 0
 
     def __init__(self, filename, file_size):
         with DownloadProgressPrinter._lock:
-            DownloadProgressPrinter._file_index += 1
             DownloadProgressPrinter._total_files += 1
             DownloadProgressPrinter._total_file_size += file_size
-            self.index = DownloadProgressPrinter._file_index
             self.filename = filename
             self.file_size = file_size
             self._downloaded = 0
-            self._last_percent = 0.0
-            self._last_write_time = 0
-            _write_progress_unlocked("downloading", filename, 0.0, f"正在下载: {filename}")
+            _write_progress_unlocked(
+                "downloading",
+                filename,
+                _calc_total_percent_unlocked(),
+                f"({DownloadProgressPrinter._completed_files}/{DownloadProgressPrinter._total_files}) 正在下载: {filename}",
+            )
 
     def update(self, chunk_size):
         with DownloadProgressPrinter._lock:
             self._downloaded += chunk_size
-            if self.file_size > 0:
-                percent = round(self._downloaded / self.file_size * 100, 1)
-            else:
-                percent = 0.0
+            DownloadProgressPrinter._total_downloaded += chunk_size
             now = time.time()
-            if percent != self._last_percent or now - self._last_write_time > 1.0:
-                self._last_percent = percent
-                self._last_write_time = now
-                _write_progress_unlocked("downloading", self.filename, percent, f"正在下载: {self.filename} ({percent}%)")
+            if now - DownloadProgressPrinter._last_write_time >= 0.5:
+                DownloadProgressPrinter._last_write_time = now
+                percent = _calc_total_percent_unlocked()
+                _write_progress_unlocked(
+                    "downloading",
+                    self.filename,
+                    percent,
+                    f"({DownloadProgressPrinter._completed_files}/{DownloadProgressPrinter._total_files}) 下载中: {self.filename}  总进度 {percent}%",
+                )
 
     def end(self):
         with DownloadProgressPrinter._lock:
-            _write_progress_unlocked("downloading", self.filename, 100.0, f"已完成: {self.filename}")
+            DownloadProgressPrinter._completed_files += 1
+            percent = _calc_total_percent_unlocked()
+            _write_progress_unlocked(
+                "downloading",
+                self.filename,
+                percent,
+                f"({DownloadProgressPrinter._completed_files}/{DownloadProgressPrinter._total_files}) 已完成: {self.filename}",
+            )
+
+
+def _calc_total_percent_unlocked():
+    total_size = DownloadProgressPrinter._total_file_size
+    if total_size > 0:
+        return round(DownloadProgressPrinter._total_downloaded / total_size * 100, 1)
+    return 0.0
 
 
 def _write_progress_unlocked(status, current_file, percent, message):
@@ -84,10 +102,11 @@ def main():
     try:
         from modelscope.hub.snapshot_download import snapshot_download
 
-        DownloadProgressPrinter._file_index = 0
         DownloadProgressPrinter._total_downloaded = 0
         DownloadProgressPrinter._total_files = 0
         DownloadProgressPrinter._total_file_size = 0
+        DownloadProgressPrinter._completed_files = 0
+        DownloadProgressPrinter._last_write_time = 0
 
         _write_progress("downloading", "", 0.0, "正在获取文件列表...")
 

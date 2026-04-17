@@ -575,6 +575,7 @@ pub async fn download_model(
     tokio::spawn(async move {
         let mut last_status = String::new();
         let mut ticker = interval(Duration::from_millis(500));
+        let mut cancelled = false;
 
         loop {
             ticker.tick().await;
@@ -582,6 +583,7 @@ pub async fn download_model(
             {
                 let map = processes_clone.lock().await;
                 if !map.contains_key(&model_id_clone) {
+                    cancelled = true;
                     break;
                 }
             }
@@ -626,6 +628,19 @@ pub async fn download_model(
                     }
                 }
             }
+        }
+
+        if cancelled {
+            cleanup_modelscope_lock(&model_id_clone);
+            let _ = fs::remove_file(&progress_file_str);
+
+            let mut map = processes_clone.lock().await;
+            if let Some(mut child) = map.remove(&model_id_clone) {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
+            drop(map);
+            return;
         }
 
         let mut map = processes_clone.lock().await;
@@ -685,10 +700,19 @@ pub async fn cancel_download(app: tauri::AppHandle, model_id: String) -> Result<
     let mut map = processes.lock().await;
 
     if let Some(mut child) = map.remove(&model_id) {
-        child
-            .kill()
-            .await
-            .map_err(|e| format!("终止下载进程失败: {}", e))?;
+        let pid = child.id();
+        let _ = child.kill().await;
+        if let Some(pid) = pid {
+            #[cfg(target_os = "windows")]
+            {
+                let _ = Command::new("taskkill")
+                    .args(["/T", "/F", "/PID", &pid.to_string()])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .await;
+            }
+        }
     }
 
     let progress = DownloadProgress {

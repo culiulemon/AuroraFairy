@@ -237,6 +237,8 @@ export function useModelManager() {
         })
       } else if (event.payload.status === 'error' || event.payload.status === 'cancelled') {
         isDownloading.value = false
+        downloadProgress.value = null
+        currentDownloadDisplayName.value = ''
       }
     })
 
