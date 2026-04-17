@@ -17,29 +17,92 @@
         <div class="settings-inner-card">
           <div class="settings-inner-header">
             <h3>环境检测</h3>
+            <button class="env-refresh-btn" @click="checkEnvironment" :disabled="!!installingPackage">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" :class="{ spinning: environmentStatus === null }">
+                <polyline points="23,4 23,10 17,10"></polyline>
+                <polyline points="1,20 1,14 7,14"></polyline>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              <span>重新检测</span>
+            </button>
           </div>
             <div class="settings-inner-content">
-              <div class="env-status-row" v-if="environmentStatus">
-                <div class="env-item" :class="{ ok: environmentStatus.python, fail: !environmentStatus.python }">
-                  <span class="env-icon">{{ environmentStatus.python ? '✅' : '❌' }}</span>
-                  <span class="env-label">Python</span>
-                  <span class="env-version" v-if="environmentStatus.python_version">{{ environmentStatus.python_version }}</span>
+              <div class="env-check-list" v-if="environmentStatus">
+                <div class="env-check-row" :class="{ ok: environmentStatus.python, fail: !environmentStatus.python }">
+                  <span class="env-check-name">
+                    Python
+                    <span class="env-check-ver" v-if="environmentStatus.python_version">{{ environmentStatus.python_version }}</span>
+                  </span>
+                  <span class="env-check-status">
+                    <template v-if="environmentStatus.python">
+                      <span class="env-check-ok">正常</span>
+                    </template>
+                    <span class="env-check-missing" v-else>未安装</span>
+                  </span>
                 </div>
-                <div class="env-item" :class="{ ok: environmentStatus.modelscope, fail: !environmentStatus.modelscope }">
-                  <span class="env-icon">{{ environmentStatus.modelscope ? '✅' : '❌' }}</span>
-                  <span class="env-label">ModelScope</span>
+                <div class="env-check-row" :class="{ ok: environmentStatus.modelscope, fail: !environmentStatus.modelscope }">
+                  <span class="env-check-name">ModelScope</span>
+                  <span class="env-check-status">
+                    <span class="env-check-ok" v-if="environmentStatus.modelscope">正常</span>
+                    <button v-else class="env-install-btn" @click="handleInstallDep('modelscope')" :disabled="!!installingPackage">
+                      <svg v-if="installingPackage === 'modelscope'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
+                        <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
+                        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                      </svg>
+                      {{ installingPackage === 'modelscope' ? '安装中...' : '安装' }}
+                    </button>
+                  </span>
                 </div>
-                <div class="env-item" :class="{ ok: environmentStatus.ollama, fail: !environmentStatus.ollama }">
-                  <span class="env-icon">{{ environmentStatus.ollama ? '✅' : '❌' }}</span>
-                  <span class="env-label">Ollama</span>
-                  <span class="env-version" v-if="environmentStatus.ollama_version">{{ environmentStatus.ollama_version }}</span>
-                  <button
-                    v-if="!environmentStatus.ollama && !isInstallingOllama"
-                    class="install-btn"
-                    @click="installOllama"
-                  >
-                    下载
-                  </button>
+                <div class="env-check-row" :class="{ ok: environmentStatus.openvino, fail: !environmentStatus.openvino }">
+                  <span class="env-check-name">
+                    OpenVINO
+                    <span class="env-check-ver" v-if="environmentStatus.openvino_version">{{ environmentStatus.openvino_version }}</span>
+                  </span>
+                  <span class="env-check-status">
+                    <template v-if="environmentStatus.openvino">
+                      <span class="env-check-ok">正常</span>
+                    </template>
+                    <button v-else class="env-install-btn" @click="handleInstallDep('openvino')" :disabled="!!installingPackage">
+                      <svg v-if="installingPackage === 'openvino'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
+                        <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
+                        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                      </svg>
+                      {{ installingPackage === 'openvino' ? '安装中...' : '安装' }}
+                    </button>
+                  </span>
+                </div>
+                <div class="env-check-row" :class="{ ok: environmentStatus.openvino_genai, fail: !environmentStatus.openvino_genai }">
+                  <span class="env-check-name">OpenVINO GenAI</span>
+                  <span class="env-check-status">
+                    <span class="env-check-ok" v-if="environmentStatus.openvino_genai">正常</span>
+                    <button v-else class="env-install-btn" @click="handleInstallDep('openvino-genai')" :disabled="!!installingPackage">
+                      <svg v-if="installingPackage === 'openvino-genai'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
+                        <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
+                        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                      </svg>
+                      {{ installingPackage === 'openvino-genai' ? '安装中...' : '安装' }}
+                    </button>
+                  </span>
+                </div>
+                <div class="env-check-row" :class="{ ok: environmentStatus.optimum, fail: !environmentStatus.optimum }">
+                  <span class="env-check-name">Optimum (Intel)</span>
+                  <span class="env-check-status">
+                    <span class="env-check-ok" v-if="environmentStatus.optimum">正常</span>
+                    <button v-else class="env-install-btn" @click="handleInstallDep('optimum[openvino]')" :disabled="!!installingPackage">
+                      <svg v-if="installingPackage === 'optimum[openvino]'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
+                        <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
+                        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                      </svg>
+                      {{ installingPackage === 'optimum[openvino]' ? '安装中...' : '安装' }}
+                    </button>
+                  </span>
+                </div>
+                <div class="env-check-row" :class="{ ok: environmentStatus.intel_gpu, fail: !environmentStatus.intel_gpu }">
+                  <span class="env-check-name">Intel GPU</span>
+                  <span class="env-check-status">
+                    <span class="env-check-ok" v-if="environmentStatus.intel_gpu">正常</span>
+                    <span class="env-check-missing" v-else>未检测到</span>
+                  </span>
                 </div>
               </div>
               <div class="env-loading" v-else>
@@ -55,43 +118,8 @@
                 </svg>
                 <span>正在检测环境...</span>
               </div>
-              <div class="env-hint" v-if="environmentStatus && (!environmentStatus.python || !environmentStatus.modelscope || !environmentStatus.ollama) && !isInstallingOllama">
-                <button class="hint-toggle" @click="showInstallGuide = !showInstallGuide">
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" :style="{ transform: showInstallGuide ? 'rotate(90deg)' : '' }">
-                    <polyline points="9,18 15,12 9,6"></polyline>
-                  </svg>
-                  <span>安装指引</span>
-                </button>
-                <div class="install-guide" v-if="showInstallGuide">
-                  <div class="guide-item" v-if="!environmentStatus.modelscope">
-                    <span class="guide-label">ModelScope:</span>
-                    <code class="guide-code">pip install modelscope</code>
-                  </div>
-                  <div class="guide-item" v-if="!environmentStatus.ollama">
-                    <span class="guide-label">Ollama:</span>
-                    <span>点击上方的"下载"按钮，或前往</span>
-                    <code class="guide-code">ollama.com</code>
-                    <span>下载安装</span>
-                  </div>
-                </div>
-              </div>
-              <div class="ollama-install-progress" v-if="isInstallingOllama">
-                <div class="install-progress-header">
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
-                    <line x1="12" y1="2" x2="12" y2="6"></line>
-                    <line x1="12" y1="18" x2="12" y2="22"></line>
-                    <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
-                    <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
-                    <line x1="2" y1="12" x2="6" y2="12"></line>
-                    <line x1="18" y1="12" x2="22" y2="12"></line>
-                    <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
-                    <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
-                  </svg>
-                  <span>正在下载 Ollama 安装包...</span>
-                </div>
-                <div class="install-progress-log" v-if="ollamaInstallProgress">
-                  <span class="progress-message">{{ ollamaInstallProgress.message }}</span>
-                </div>
+              <div class="dep-install-msg" v-if="dependencyInstallMessage">
+                <span>{{ dependencyInstallMessage }}</span>
               </div>
             </div>
           </div>
@@ -188,7 +216,7 @@
                         v-if="model.status !== 'running'"
                         class="model-action-btn deploy"
                         @click="handleDeploy(model)"
-                        :disabled="model.status === 'downloading' || model.status === 'stopping'"
+                        :disabled="model.status === 'downloading' || model.status === 'converting' || model.status === 'stopping'"
                       >
                         部署
                       </button>
@@ -243,8 +271,16 @@
     <BaseDialog v-model="showDeployConfig" title="部署配置">
       <div class="form-group">
         <label>端口</label>
-        <input type="text" value="11434" disabled />
-        <span class="form-hint">Ollama 使用固定端口 11434</span>
+        <input type="number" v-model.number="deployConfigForm.port" placeholder="8000" min="1024" max="65535" />
+        <span class="form-hint">默认端口 8000</span>
+      </div>
+      <div class="form-group">
+        <label>推理设备</label>
+        <select class="device-select" v-model="deployConfigForm.device">
+          <option value="GPU">GPU (Intel Arc)</option>
+          <option value="CPU">CPU</option>
+        </select>
+        <span class="form-hint">选择 Intel GPU 可获得更快推理速度</span>
       </div>
       <div class="form-group">
         <label>上下文长度</label>
@@ -253,11 +289,6 @@
       <div class="form-group">
         <label>线程数</label>
         <input type="number" v-model.number="deployConfigForm.threads" placeholder="4" min="1" />
-      </div>
-      <div class="form-group">
-        <label>GPU 层数</label>
-        <input type="number" v-model.number="deployConfigForm.gpuLayers" placeholder="0" min="0" />
-        <span class="form-hint">设置为 0 时仅使用 CPU</span>
       </div>
       <template #actions>
         <button class="cancel-btn" @click="showDeployConfig = false">取消</button>
@@ -299,20 +330,20 @@ const {
   isDownloading,
   downloadProgress,
   models,
-  isInstallingOllama,
-  ollamaInstallProgress,
   deployError,
+  installingPackage,
+  dependencyInstallMessage,
+  checkEnvironment,
   downloadModel,
   cancelDownload,
   deployModel,
   stopModel,
   deleteModel,
   addAsProvider,
-  installOllama,
+  installDependency,
 } = useModelManager()
 
 const modelIdInput = ref('')
-const showInstallGuide = ref(false)
 
 const isValidModelId = computed(() => {
   const k = modelIdInput.value.trim()
@@ -327,7 +358,8 @@ const deletingModel = ref<LocalModel | null>(null)
 const deployConfigForm = reactive({
   ctxSize: 2048,
   threads: 4,
-  gpuLayers: 0
+  device: 'GPU',
+  port: 8000
 })
 
 function formatSize(bytes: number): string {
@@ -374,6 +406,7 @@ function getStatusText(status: string): string {
     running: '运行中',
     ready: '已停止',
     downloading: '下载中',
+    converting: '转换中',
     error: '错误',
     stopping: '停止中'
   }
@@ -387,6 +420,10 @@ async function handleInstallModel() {
   downloadModel(id, displayName)
 }
 
+function handleInstallDep(packageName: string) {
+  installDependency(packageName)
+}
+
 function handleCancelDownload() {
   if (downloadProgress.value) {
     cancelDownload(downloadProgress.value.model_id)
@@ -398,21 +435,21 @@ function openDeployConfig(model: LocalModel) {
   const config = model.deployConfig || getDefaultDeployConfig()
   deployConfigForm.ctxSize = config.ctxSize
   deployConfigForm.threads = config.threads
-  deployConfigForm.gpuLayers = config.gpuLayers
+  deployConfigForm.device = config.device || 'GPU'
+  deployConfigForm.port = config.port || 8000
   showDeployConfig.value = true
 }
 
 function handleConfirmDeploy() {
   if (!editingModel.value) return
-  updateLocalModel(editingModel.value.id, {
-    deployConfig: {
-      port: 11434,
-      ctxSize: deployConfigForm.ctxSize,
-      threads: deployConfigForm.threads,
-      gpuLayers: deployConfigForm.gpuLayers
-    }
-  })
-  const model = { ...editingModel.value, deployConfig: { port: 11434, ctxSize: deployConfigForm.ctxSize, threads: deployConfigForm.threads, gpuLayers: deployConfigForm.gpuLayers } }
+  const deployConfig = {
+    port: deployConfigForm.port,
+    ctxSize: deployConfigForm.ctxSize,
+    threads: deployConfigForm.threads,
+    device: deployConfigForm.device
+  }
+  updateLocalModel(editingModel.value.id, { deployConfig })
+  const model = { ...editingModel.value, deployConfig }
   showDeployConfig.value = false
   deployModel(model)
 }
@@ -536,49 +573,123 @@ function handleAddAsProvider(model: LocalModel) {
   padding: 20px;
 }
 
-.env-status-row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
+.env-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-card);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-.env-item {
+.env-refresh-btn:hover:not(:disabled) {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  background: var(--color-surface);
+}
+
+.env-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.env-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.env-check-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-radius: 10px;
-  background: var(--color-surface-card);
-  border: 1px solid var(--color-border);
-  flex: 1;
-  min-width: 140px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 13px;
 }
 
-.env-icon {
-  font-size: 16px;
+.env-check-row:last-child {
+  border-bottom: none;
+}
+
+.env-check-name {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
   flex-shrink: 0;
 }
 
-.env-label {
-  font-size: 13px;
+.env-check-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.env-check-ok {
+  color: var(--color-accent-success);
   font-weight: 600;
+  font-size: 13px;
+}
+
+.env-check-ver {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.env-check-missing {
+  color: var(--color-accent-error);
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.env-check-row.ok .env-check-name {
   color: var(--color-text-primary);
 }
 
-.env-version {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  margin-left: auto;
+.env-check-row.fail .env-check-name {
+  color: var(--color-text-secondary);
 }
 
-.env-item.ok {
-  border-color: var(--color-accent-success);
-  background: var(--color-accent-success-alpha-10);
+.env-install-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--color-primary-gradient);
+  color: var(--color-text-inverse);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-.env-item.fail {
-  border-color: var(--color-accent-error);
-  background: var(--color-danger-bg);
+.env-install-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px var(--color-shadow-primary-strong);
+}
+
+.env-install-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.dep-install-msg {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--color-surface-card);
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
 .env-loading {
@@ -588,116 +699,6 @@ function handleAddAsProvider(model: LocalModel) {
   padding: 12px 0;
   color: var(--color-text-muted);
   font-size: 13px;
-}
-
-.env-hint {
-  margin-top: 12px;
-}
-
-.hint-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 0;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-primary);
-  transition: all 0.2s;
-}
-
-.hint-toggle:hover {
-  color: var(--color-primary-hover);
-}
-
-.hint-toggle svg {
-  transition: transform 0.2s;
-}
-
-.install-guide {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
-  background: var(--color-surface-card);
-  border-radius: 10px;
-  border: 1px solid var(--color-border);
-}
-
-.guide-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  color: var(--color-text-primary);
-  flex-wrap: wrap;
-}
-
-.guide-label {
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  flex-shrink: 0;
-}
-
-.guide-code {
-  padding: 4px 10px;
-  background: var(--color-surface-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-  font-size: 12px;
-  color: var(--color-primary);
-}
-
-.install-btn {
-  margin-left: 8px;
-  padding: 2px 10px;
-  border: none;
-  border-radius: 10px;
-  background: var(--color-primary-gradient);
-  color: var(--color-text-inverse);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.install-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px var(--color-shadow-primary-strong);
-}
-
-.ollama-install-progress {
-  margin-top: 12px;
-  padding: 12px;
-  background: var(--color-surface-secondary);
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-}
-
-.install-progress-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--color-text-secondary);
-  font-weight: 500;
-}
-
-.install-progress-log {
-  margin-top: 8px;
-  padding: 8px;
-  background: var(--color-surface);
-  border-radius: 6px;
-  font-size: 11px;
-  color: var(--color-text-secondary);
-  font-family: 'Consolas', 'Monaco', monospace;
-  word-break: break-all;
-  max-height: 80px;
-  overflow-y: auto;
 }
 
 .install-row {
@@ -1196,6 +1197,26 @@ function handleAddAsProvider(model: LocalModel) {
   opacity: 0.6;
   background: var(--color-border);
   cursor: not-allowed;
+}
+
+.device-select {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  appearance: none;
+  cursor: pointer;
+}
+
+.device-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  background: var(--color-surface-card);
+  box-shadow: 0 0 0 3px var(--color-primary-alpha-15);
 }
 
 .form-hint {

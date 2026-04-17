@@ -13,7 +13,8 @@ use commands::{
     check_environment, search_models, download_model, cancel_download,
     deploy_model, stop_model, delete_model, get_model_info,
 };
-use commands::{install_ollama, get_ollama_models};
+use commands::convert_model_to_ir;
+use commands::install_dependency;
 use commands::{BrowserManager, browser_start, browser_execute, browser_stop};
 use commands::fbm_fs::{
     fbm_mkdir, fbm_write_file, fbm_read_file, fbm_unlink, fbm_readdir,
@@ -495,8 +496,8 @@ pub fn run() {
             stop_model,
             delete_model,
             get_model_info,
-            install_ollama,
-            get_ollama_models,
+            convert_model_to_ir,
+            install_dependency,
             browser_start,
             browser_execute,
             browser_stop,

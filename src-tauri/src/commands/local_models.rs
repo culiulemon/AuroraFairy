@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -7,6 +6,7 @@ use std::sync::Arc;
 use tauri::Emitter;
 
 #[cfg(target_os = "windows")]
+#[allow(unused_imports)]
 use std::os::windows::process::CommandExt;
 
 use tokio::process::{Child, Command};
@@ -17,8 +17,6 @@ use walkdir::WalkDir;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
-
 static DOWNLOAD_PROCESSES: std::sync::OnceLock<Arc<Mutex<HashMap<String, Child>>>> =
     std::sync::OnceLock::new();
 
@@ -28,7 +26,51 @@ fn get_download_processes() -> Arc<Mutex<HashMap<String, Child>>> {
         .clone()
 }
 
+static OPENVINO_SERVER: std::sync::OnceLock<Arc<Mutex<Option<OpenVinoServer>>>> =
+    std::sync::OnceLock::new();
+
+fn get_openvino_server() -> Arc<Mutex<Option<OpenVinoServer>>> {
+    OPENVINO_SERVER
+        .get_or_init(|| Arc::new(Mutex::new(None)))
+        .clone()
+}
+
+struct OpenVinoServer {
+    child: Child,
+    port: u16,
+}
+
+impl Drop for OpenVinoServer {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
+fn get_models_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let data_dir = crate::get_data_dir(app)?;
+    let models_dir = data_dir.join("models");
+    if !models_dir.exists() {
+        fs::create_dir_all(&models_dir)
+            .map_err(|e| format!("无法创建模型目录: {}", e))?;
+    }
+    Ok(models_dir)
+}
+
+fn cleanup_modelscope_lock(model_id: &str) {
+    let lock_name = model_id.replace('/', "___");
+    let lock_dir = dirs::cache_dir()
+        .unwrap_or_default()
+        .join("modelscope")
+        .join("hub")
+        .join(".lock");
+    let lock_file = lock_dir.join(&lock_name);
+    if lock_file.exists() {
+        let _ = fs::remove_file(&lock_file);
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct InstallProgress {
     pub status: String,
     pub message: String,
@@ -39,8 +81,11 @@ pub struct EnvironmentStatus {
     pub python: bool,
     pub python_version: Option<String>,
     pub modelscope: bool,
-    pub ollama: bool,
-    pub ollama_version: Option<String>,
+    pub openvino: bool,
+    pub openvino_version: Option<String>,
+    pub openvino_genai: bool,
+    pub optimum: bool,
+    pub intel_gpu: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -75,12 +120,13 @@ pub struct ServerStatus {
 pub struct DeployConfig {
     pub ctx_size: u32,
     pub threads: u32,
-    pub gpu_layers: u32,
+    pub device: String,
     pub port: u16,
 }
 
-async fn ollama_api_get(path: &str) -> Result<serde_json::Value, String> {
-    let url = format!("{}{}", OLLAMA_BASE_URL, path);
+#[allow(dead_code)]
+async fn openvino_api_get(port: u16, path: &str) -> Result<serde_json::Value, String> {
+    let url = format!("http://127.0.0.1:{}{}", port, path);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -89,19 +135,23 @@ async fn ollama_api_get(path: &str) -> Result<serde_json::Value, String> {
         .get(&url)
         .send()
         .await
-        .map_err(|e| format!("Ollama API 请求失败: {} (请确认 Ollama 正在运行)", e))?;
+        .map_err(|e| format!("OpenVINO 服务器请求失败: {} (请确认服务器正在运行)", e))?;
     if !resp.status().is_success() {
-        return Err(format!("Ollama API 返回错误: HTTP {}", resp.status()));
+        return Err(format!("OpenVINO 服务器返回错误: HTTP {}", resp.status()));
     }
     resp.json()
         .await
-        .map_err(|e| format!("解析 Ollama API 响应失败: {}", e))
+        .map_err(|e| format!("解析响应失败: {}", e))
 }
 
-async fn ollama_api_post_json(path: &str, body: serde_json::Value) -> Result<(), String> {
-    let url = format!("{}{}", OLLAMA_BASE_URL, path);
+async fn openvino_api_post_json(
+    port: u16,
+    path: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let url = format!("http://127.0.0.1:{}{}", port, path);
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(600))
+        .timeout(Duration::from_secs(300))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
     let resp = client
@@ -109,64 +159,91 @@ async fn ollama_api_post_json(path: &str, body: serde_json::Value) -> Result<(),
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Ollama API 请求失败: {}", e))?;
-    if !resp.status().is_success() && resp.status().as_u16() != 200 {
-        return Err(format!("Ollama API 返回错误: HTTP {}", resp.status()));
+        .map_err(|e| format!("OpenVINO 服务器请求失败: {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("OpenVINO 服务器返回错误: HTTP {} - {}", status, text));
     }
-    let _ = resp.bytes().await;
-    Ok(())
+    resp.json()
+        .await
+        .map_err(|e| format!("解析响应失败: {}", e))
 }
 
-async fn upload_blob(file_path: &Path) -> Result<String, String> {
-    let file_content = fs::read(file_path)
-        .map_err(|e| format!("读取文件失败: {} - {}", file_path.display(), e))?;
+async fn start_openvino_server(_app: &tauri::AppHandle, port: u16) -> Result<(), String> {
+    let server_state = get_openvino_server();
+    {
+        let guard = server_state.lock().await;
+        if let Some(ref server) = *guard {
+            let health_url = format!("http://127.0.0.1:{}/health", server.port);
+            if let Ok(client) = reqwest::Client::builder()
+                .timeout(Duration::from_secs(3))
+                .build()
+            {
+                if let Ok(resp) = client.get(&health_url).send().await {
+                    if resp.status().is_success() {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
 
-    let mut hasher = Sha256::new();
-    hasher.update(&file_content);
-    let digest = format!("sha256:{:x}", hasher.finalize());
+    let project_root = crate::get_project_root()?;
+    let script_path = project_root.join("scripts").join("openvino_server.py");
 
-    let url = format!("{}/api/blobs/{}", OLLAMA_BASE_URL, digest);
+    if !script_path.exists() {
+        return Err(format!("OpenVINO 服务器脚本不存在: {:?}", script_path));
+    }
 
+    let port_str = port.to_string();
+    let script_str = script_path.to_string_lossy().to_string();
+    let mut cmd = Command::new("python");
+    cmd.args([&script_str, "--port", &port_str])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("启动 OpenVINO 服务器失败: {}", e))?;
+
+    {
+        let mut guard = server_state.lock().await;
+        *guard = Some(OpenVinoServer { child, port });
+    }
+
+    let health_url = format!("http://127.0.0.1:{}/health", port);
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(600))
+        .timeout(Duration::from_secs(60))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
-    let head_resp = client
-        .head(&url)
-        .send()
-        .await
-        .map_err(|e| format!("检查 blob 失败: {}", e))?;
-
-    if head_resp.status().as_u16() == 200 {
-        println!("[upload_blob] Blob already exists: {}", digest);
-        return Ok(digest);
+    let mut retries = 0;
+    loop {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        retries += 1;
+        match client.get(&health_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                break;
+            }
+            _ => {
+                if retries > 30 {
+                    return Err("OpenVINO 服务器启动超时 (15秒)".to_string());
+                }
+            }
+        }
     }
 
-    println!(
-        "[upload_blob] Uploading {} ({} bytes) -> {}",
-        file_path.display(),
-        file_content.len(),
-        digest
-    );
+    Ok(())
+}
 
-    let resp = client
-        .post(&url)
-        .header("Content-Type", "application/octet-stream")
-        .body(file_content)
-        .send()
-        .await
-        .map_err(|e| format!("上传文件失败: {} - {}", file_path.display(), e))?;
-
-    if resp.status().as_u16() != 201 {
-        return Err(format!(
-            "上传文件失败: {} - HTTP {}",
-            file_path.display(),
-            resp.status()
-        ));
-    }
-
-    Ok(digest)
+#[allow(dead_code)]
+async fn stop_openvino_server() -> Result<(), String> {
+    let server_state = get_openvino_server();
+    let mut guard = server_state.lock().await;
+    *guard = None;
+    Ok(())
 }
 
 #[tauri::command]
@@ -209,43 +286,144 @@ pub async fn check_environment() -> Result<EnvironmentStatus, String> {
         _ => false,
     };
 
-    let ollama_check = timeout(Duration::from_secs(5), async {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build();
-        match client {
-            Ok(c) => {
-                let resp = c.get(format!("{}/api/version", OLLAMA_BASE_URL)).send().await;
-                match resp {
-                    Ok(r) if r.status().is_success() => {
-                        let body: serde_json::Value = r.json().await.unwrap_or_default();
-                        let version = body
-                            .get("version")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        Ok::<(bool, Option<String>), ()>((true, Some(version)))
-                    }
-                    _ => Ok::<(bool, Option<String>), ()>((false, None)),
-                }
-            }
-            Err(_) => Ok::<(bool, Option<String>), ()>((false, None)),
-        }
+    let openvino_check = timeout(Duration::from_secs(10), async {
+        let mut cmd = Command::new("cmd");
+        cmd.args([
+            "/C",
+            "python",
+            "-c",
+            "import openvino; print(openvino.__version__)",
+        ]);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.output().await
     })
     .await;
 
-    let (ollama, ollama_version) = match ollama_check {
-        Ok(Ok((has, ver))) => (has, ver),
+    let (openvino, openvino_version) = match openvino_check {
+        Ok(Ok(output)) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            (true, Some(stdout))
+        }
         _ => (false, None),
     };
+
+    let openvino_genai_check = timeout(Duration::from_secs(10), async {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "python", "-c", "import openvino_genai"]);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.output().await
+    })
+    .await;
+
+    let openvino_genai = match openvino_genai_check {
+        Ok(Ok(output)) => output.status.success(),
+        _ => false,
+    };
+
+    let optimum_check = timeout(Duration::from_secs(10), async {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "python", "-c", "import optimum.intel"]);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.output().await
+    })
+    .await;
+
+    let optimum = match optimum_check {
+        Ok(Ok(output)) => output.status.success(),
+        _ => false,
+    };
+
+    let intel_gpu = check_intel_gpu().await;
 
     Ok(EnvironmentStatus {
         python,
         python_version,
         modelscope,
-        ollama,
-        ollama_version,
+        openvino,
+        openvino_version,
+        openvino_genai,
+        optimum,
+        intel_gpu,
     })
+}
+
+async fn check_intel_gpu() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let gpu_check = timeout(Duration::from_secs(10), async {
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/C", "python", "-c",
+                "import openvino as ov; core = ov.Core(); devices = core.available_devices; print('GPU' in devices)"
+            ]);
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            cmd.output().await
+        })
+        .await;
+
+        match gpu_check {
+            Ok(Ok(output)) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                stdout == "True"
+            }
+            _ => false,
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
+#[tauri::command]
+pub async fn install_dependency(
+    app: tauri::AppHandle,
+    package: String,
+) -> Result<(), String> {
+    let progress = InstallProgress {
+        status: "installing".to_string(),
+        message: format!("正在安装 {}...", package),
+    };
+    let _ = app.emit("dependency-install-progress", progress);
+
+    let mut cmd = Command::new("cmd");
+    cmd.args(["/C", "pip", "install", &package]);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let result = cmd.output().await;
+
+    match result {
+        Ok(output) if output.status.success() => {
+            let progress = InstallProgress {
+                status: "completed".to_string(),
+                message: format!("{} 安装完成", package),
+            };
+            let _ = app.emit("dependency-install-progress", progress);
+            Ok(())
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let progress = InstallProgress {
+                status: "error".to_string(),
+                message: format!("{} 安装失败: {}", package, stderr),
+            };
+            let _ = app.emit("dependency-install-progress", progress);
+            Err(format!("安装失败: {}", stderr))
+        }
+        Err(e) => {
+            let progress = InstallProgress {
+                status: "error".to_string(),
+                message: format!("安装进程异常: {}", e),
+            };
+            let _ = app.emit("dependency-install-progress", progress);
+            Err(format!("安装进程启动失败: {}", e))
+        }
+    }
 }
 
 #[tauri::command]
@@ -338,6 +516,17 @@ pub async fn download_model(
     model_id: String,
     local_dir: String,
 ) -> Result<String, String> {
+    cleanup_modelscope_lock(&model_id);
+
+    let models_dir = get_models_dir(&app)?;
+    let progress_file_path = models_dir.join(format!(
+        ".download_progress_{}.json",
+        model_id.replace('/', "_")
+    ));
+    if progress_file_path.exists() {
+        let _ = fs::remove_file(&progress_file_path);
+    }
+
     let processes = get_download_processes();
     {
         let map = processes.lock().await;
@@ -346,26 +535,14 @@ pub async fn download_model(
         }
     }
 
+    let abs_local_dir = models_dir.join(local_dir.split('/').last().unwrap_or(&local_dir));
     let project_root = crate::get_project_root()?;
-    let abs_local_dir = project_root.join(&local_dir);
     let script_path = project_root.join("scripts").join("download_model.py");
-
-    println!("[download_model] project_root: {:?}", project_root);
-    println!("[download_model] script_path: {:?}", script_path);
-    println!("[download_model] abs_local_dir: {:?}", abs_local_dir);
 
     if !script_path.exists() {
         return Err(format!("下载脚本不存在: {:?}", script_path));
     }
 
-    let models_dir = project_root.join("models");
-    if !models_dir.exists() {
-        let _ = fs::create_dir_all(&models_dir);
-    }
-    let progress_file_path = models_dir.join(format!(
-        ".download_progress_{}.json",
-        model_id.replace('/', "_")
-    ));
     let progress_file_str = progress_file_path.to_string_lossy().to_string();
 
     let script_str = script_path.to_string_lossy().to_string();
@@ -377,7 +554,6 @@ pub async fn download_model(
         local_dir_str.as_str(),
         progress_file_str.as_str(),
     ])
-    .current_dir(&project_root)
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::null());
     #[cfg(target_os = "windows")]
@@ -394,6 +570,7 @@ pub async fn download_model(
     let app_clone = app.clone();
     let model_id_clone = model_id.clone();
     let processes_clone = processes.clone();
+    let _local_dir_for_convert = local_dir.clone();
 
     tokio::spawn(async move {
         let mut last_status = String::new();
@@ -468,10 +645,7 @@ pub async fn download_model(
                     }
                 }
                 Ok(status) => {
-                    println!(
-                        "[download_model] Download FAILED for {}: exit code: {}",
-                        model_id_clone, status
-                    );
+                    cleanup_modelscope_lock(&model_id_clone);
                     if last_status != "completed" && last_status != "error" {
                         let progress = DownloadProgress {
                             model_id: model_id_clone.clone(),
@@ -484,10 +658,7 @@ pub async fn download_model(
                     }
                 }
                 Err(e) => {
-                    println!(
-                        "[download_model] Download EXCEPTION for {}: {}",
-                        model_id_clone, e
-                    );
+                    cleanup_modelscope_lock(&model_id_clone);
                     if last_status != "completed" && last_status != "error" {
                         let progress = DownloadProgress {
                             model_id: model_id_clone.clone(),
@@ -514,7 +685,8 @@ pub async fn cancel_download(app: tauri::AppHandle, model_id: String) -> Result<
     let mut map = processes.lock().await;
 
     if let Some(mut child) = map.remove(&model_id) {
-        child.kill()
+        child
+            .kill()
             .await
             .map_err(|e| format!("终止下载进程失败: {}", e))?;
     }
@@ -528,14 +700,123 @@ pub async fn cancel_download(app: tauri::AppHandle, model_id: String) -> Result<
     };
     let _ = app.emit("model-download-progress", progress);
 
-    let project_root = crate::get_project_root().unwrap_or_default();
-    let progress_file = project_root.join("models").join(format!(
+    let models_dir = get_models_dir(&app).unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let progress_file = models_dir.join(format!(
         ".download_progress_{}.json",
         model_id.replace('/', "_")
     ));
     let _ = fs::remove_file(&progress_file);
+    cleanup_modelscope_lock(&model_id);
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn convert_model_to_ir(
+    app: tauri::AppHandle,
+    model_path: String,
+    device: String,
+) -> Result<String, String> {
+    let models_dir = get_models_dir(&app)?;
+    let abs_model_dir = models_dir.join(model_path.split('/').last().unwrap_or(&model_path));
+
+    if !abs_model_dir.exists() {
+        return Err(format!("模型目录不存在: {}", model_path));
+    }
+
+    let ir_model_name = model_path.split('/').last().unwrap_or(&model_path);
+    let ir_output_dir = format!("{}_ov", ir_model_name);
+    let abs_ir_dir = models_dir.join(&ir_output_dir);
+
+    let ov_xml = abs_ir_dir.join("openvino_model.xml");
+    let ov_bin = abs_ir_dir.join("openvino_model.bin");
+    if ov_xml.exists() && ov_bin.exists() {
+        return Ok(ir_output_dir);
+    }
+
+    let project_root = crate::get_project_root()?;
+    let convert_script = project_root.join("scripts").join("convert_model.py");
+    if !convert_script.exists() {
+        return Err(format!("转换脚本不存在: {:?}", convert_script));
+    }
+
+    let progress_file = models_dir.join(format!(
+        ".convert_progress_{}.json",
+        model_path.replace('/', "_").replace('\\', "_")
+    ));
+
+    let status = ServerStatus {
+        model_id: model_path.clone(),
+        status: "importing".to_string(),
+        port: 0,
+        message: "正在转换模型到 OpenVINO IR 格式...".to_string(),
+    };
+    let _ = app.emit("model-server-status", status);
+
+    let script_str = convert_script.to_string_lossy().to_string();
+    let model_dir_str = abs_model_dir.to_string_lossy().to_string();
+    let output_dir_str = abs_ir_dir.to_string_lossy().to_string();
+    let progress_str = progress_file.to_string_lossy().to_string();
+
+    let mut cmd = Command::new("python");
+    cmd.args([
+        &script_str,
+        &model_dir_str,
+        &output_dir_str,
+        &progress_str,
+        &device,
+    ])
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let result = cmd.output().await;
+
+    let _ = fs::remove_file(&progress_file);
+
+    match result {
+        Ok(output) if output.status.success() => {
+            if ov_xml.exists() && ov_bin.exists() {
+                let status = ServerStatus {
+                    model_id: model_path.clone(),
+                    status: "imported".to_string(),
+                    port: 0,
+                    message: "模型转换完成".to_string(),
+                };
+                let _ = app.emit("model-server-status", status);
+                Ok(ir_output_dir)
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                Err(format!("转换完成但输出文件不存在: {}", stderr))
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let status = ServerStatus {
+                model_id: model_path.clone(),
+                status: "error".to_string(),
+                port: 0,
+                message: format!("模型转换失败"),
+            };
+            let _ = app.emit("model-server-status", status);
+            Err(format!(
+                "模型转换失败: {} {}",
+                stderr, stdout
+            ))
+        }
+        Err(e) => {
+            let status = ServerStatus {
+                model_id: model_path.clone(),
+                status: "error".to_string(),
+                port: 0,
+                message: format!("转换进程异常: {}", e),
+            };
+            let _ = app.emit("model-server-status", status);
+            Err(format!("转换进程启动失败: {}", e))
+        }
+    }
 }
 
 #[tauri::command]
@@ -546,196 +827,74 @@ pub async fn deploy_model(
     _gguf_file: String,
     config: DeployConfig,
 ) -> Result<u16, String> {
-    let project_root = crate::get_project_root()?;
-    let model_dir = project_root.join(&model_path);
-    if !model_dir.exists() {
-        return Err(format!("模型目录不存在: {}", model_path));
+    let models_dir = get_models_dir(&app)?;
+
+    let ir_model_name = model_path.split('/').last().unwrap_or(&model_path);
+    let ir_path = format!("{}_ov", ir_model_name);
+    let abs_ir_dir = models_dir.join(&ir_path);
+
+    if !abs_ir_dir.exists() {
+        let ov_xml = abs_ir_dir.join("openvino_model.xml");
+        if !ov_xml.exists() {
+            let convert_result = convert_model_to_ir(
+                app.clone(),
+                model_path.clone(),
+                config.device.clone(),
+            )
+            .await;
+
+            match convert_result {
+                Ok(_) => {}
+                Err(e) => {
+                    let status = ServerStatus {
+                        model_id: model_path.clone(),
+                        status: "error".to_string(),
+                        port: 0,
+                        message: format!("模型转换失败: {}", e),
+                    };
+                    let _ = app.emit("model-server-status", status);
+                    return Err(e);
+                }
+            }
+        }
     }
 
-    let ollama_model_name = model_name
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .collect::<String>()
-        .to_lowercase();
-
-    if ollama_model_name.is_empty() {
-        return Err("模型名称无效".to_string());
-    }
+    let port = if config.port > 0 { config.port } else { 8000 };
 
     let status = ServerStatus {
         model_id: model_path.clone(),
-        status: "importing".to_string(),
-        port: 11434,
-        message: "正在导入模型到 Ollama...".to_string(),
+        status: "starting".to_string(),
+        port,
+        message: "正在启动 OpenVINO 推理服务器...".to_string(),
     };
     let _ = app.emit("model-server-status", status);
 
-    let mut file_digests: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    let mut total_files = 0u32;
-    let mut uploaded_files = 0u32;
+    start_openvino_server(&app, port).await?;
 
-    for entry in WalkDir::new(&model_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        if file_name.starts_with('.') {
-            continue;
-        }
-        total_files += 1;
-    }
-
-    for entry in WalkDir::new(&model_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        if file_name.starts_with('.') {
-            continue;
-        }
-
-        uploaded_files += 1;
-        let progress = ServerStatus {
-            model_id: model_path.clone(),
-            status: "importing".to_string(),
-            port: 11434,
-            message: format!(
-                "正在上传文件 ({}/{}) {}",
-                uploaded_files, total_files, file_name
-            ),
-        };
-        let _ = app.emit("model-server-status", progress);
-
-        match upload_blob(entry.path()).await {
-            Ok(digest) => {
-                file_digests.insert(file_name, digest);
-            }
-            Err(e) => {
-                let status = ServerStatus {
-                    model_id: model_path.clone(),
-                    status: "error".to_string(),
-                    port: 0,
-                    message: format!("上传文件失败: {}", e),
-                };
-                let _ = app.emit("model-server-status", status);
-                return Err(e);
-            }
-        }
-    }
-
-    let create_progress = ServerStatus {
+    let load_status = ServerStatus {
         model_id: model_path.clone(),
         status: "importing".to_string(),
-        port: 11434,
-        message: "正在创建 Ollama 模型 (可能需要几分钟)...".to_string(),
-    };
-    let _ = app.emit("model-server-status", create_progress);
-
-    let mut create_body = serde_json::json!({
-        "model": ollama_model_name,
-        "files": file_digests,
-        "stream": false,
-    });
-
-    let mut params = serde_json::Map::new();
-    let ctx_size = if config.ctx_size > 0 { config.ctx_size } else { 2048 };
-    let threads = if config.threads > 0 { config.threads } else { 4 };
-    params.insert("num_ctx".to_string(), serde_json::json!(ctx_size));
-    params.insert("num_thread".to_string(), serde_json::json!(threads));
-    if config.gpu_layers > 0 {
-        params.insert("num_gpu".to_string(), serde_json::json!(config.gpu_layers));
-    }
-    create_body["parameters"] = serde_json::json!(params);
-
-    match ollama_api_post_json("/api/create", create_body).await {
-        Ok(()) => {}
-        Err(e) => {
-            let status = ServerStatus {
-                model_id: model_path.clone(),
-                status: "error".to_string(),
-                port: 0,
-                message: format!("创建模型失败: {}", e),
-            };
-            let _ = app.emit("model-server-status", status);
-            return Err(format!("创建 Ollama 模型失败: {}", e));
-        }
-    }
-
-    println!(
-        "[deploy_model] Ollama model '{}' created, running test...",
-        ollama_model_name
-    );
-
-    let run_progress = ServerStatus {
-        model_id: model_path.clone(),
-        status: "starting".to_string(),
-        port: 11434,
+        port,
         message: "正在加载模型...".to_string(),
     };
-    let _ = app.emit("model-server-status", run_progress);
+    let _ = app.emit("model-server-status", load_status);
 
+    let ir_path_str = abs_ir_dir.to_string_lossy().to_string();
     let load_body = serde_json::json!({
-        "model": ollama_model_name,
-        "prompt": "",
-        "keep_alive": "10m",
+        "model_path": ir_path_str,
+        "model_name": model_name,
+        "device": config.device,
     });
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(300))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-    match client
-        .post(format!("{}/api/generate", OLLAMA_BASE_URL))
-        .json(&load_body)
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            let body: serde_json::Value = resp
-                .json()
-                .await
-                .unwrap_or(serde_json::json!({"done": false}));
-            let done = body.get("done").and_then(|d| d.as_bool()).unwrap_or(false);
-            if done {
-                let status = ServerStatus {
-                    model_id: model_path.clone(),
-                    status: "running".to_string(),
-                    port: 11434,
-                    message: "模型已加载并运行".to_string(),
-                };
-                let _ = app.emit("model-server-status", status);
-                println!(
-                    "[deploy_model] Model '{}' loaded successfully",
-                    ollama_model_name
-                );
-            } else {
-                let status = ServerStatus {
-                    model_id: model_path.clone(),
-                    status: "running".to_string(),
-                    port: 11434,
-                    message: "模型已启动".to_string(),
-                };
-                let _ = app.emit("model-server-status", status);
-            }
-        }
-        Ok(resp) => {
-            let status_text = resp.status().to_string();
+    match openvino_api_post_json(port, "/api/load", load_body).await {
+        Ok(_) => {
             let status = ServerStatus {
                 model_id: model_path.clone(),
-                status: "error".to_string(),
-                port: 0,
-                message: format!("加载模型失败: HTTP {}", status_text),
+                status: "running".to_string(),
+                port,
+                message: "模型已加载并运行".to_string(),
             };
             let _ = app.emit("model-server-status", status);
-            return Err(format!("加载模型失败: HTTP {}", status_text));
         }
         Err(e) => {
             let status = ServerStatus {
@@ -745,41 +904,29 @@ pub async fn deploy_model(
                 message: format!("加载模型失败: {}", e),
             };
             let _ = app.emit("model-server-status", status);
-            return Err(format!("加载模型失败: {}", e));
+            return Err(e);
         }
     }
 
-    Ok(11434)
+    Ok(port)
 }
 
 #[tauri::command]
 pub async fn stop_model(app: tauri::AppHandle, model_path: String) -> Result<(), String> {
-    let model_name = model_path
-        .split('/')
-        .last()
-        .unwrap_or(&model_path)
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .collect::<String>()
-        .to_lowercase();
+    let server_state = get_openvino_server();
+    let port = {
+        let guard = server_state.lock().await;
+        guard.as_ref().map(|s| s.port).unwrap_or(0)
+    };
 
-    let unload_body = serde_json::json!({
-        "model": model_name,
-        "keep_alive": "0",
-    });
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-    let resp = client
-        .post(format!("{}/api/generate", OLLAMA_BASE_URL))
-        .json(&unload_body)
-        .send()
+    if port > 0 {
+        let _ = openvino_api_post_json(
+            port,
+            "/api/unload",
+            serde_json::json!({}),
+        )
         .await;
-
-    let _ = resp;
+    }
 
     let status = ServerStatus {
         model_id: model_path,
@@ -793,53 +940,29 @@ pub async fn stop_model(app: tauri::AppHandle, model_path: String) -> Result<(),
 }
 
 #[tauri::command]
-pub async fn delete_model(_app: tauri::AppHandle, local_dir: String) -> Result<(), String> {
-    let model_name = local_dir
-        .split('/')
-        .last()
-        .unwrap_or(&local_dir)
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .collect::<String>()
-        .to_lowercase();
+pub async fn delete_model(app: tauri::AppHandle, local_dir: String) -> Result<(), String> {
+    let models_dir = get_models_dir(&app)?;
+    let model_name = local_dir.split('/').last().unwrap_or(&local_dir);
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-    let resp = client
-        .delete(format!("{}/api/delete", OLLAMA_BASE_URL))
-        .json(&serde_json::json!({ "model": model_name }))
-        .send()
-        .await;
-
-    if let Ok(r) = resp {
-        if r.status().is_success() {
-            println!("[delete_model] Deleted Ollama model: {}", model_name);
-        } else {
-            println!(
-                "[delete_model] Failed to delete Ollama model: HTTP {}",
-                r.status()
-            );
-        }
-    }
-
-    let project_root = crate::get_project_root()?;
-    let abs_dir = project_root.join(&local_dir);
-
+    let abs_dir = models_dir.join(model_name);
     if abs_dir.exists() {
         std::fs::remove_dir_all(&abs_dir)
             .map_err(|e| format!("删除模型目录失败: {}", e))?;
+    }
+
+    let ir_dir = models_dir.join(format!("{}_ov", model_name));
+    if ir_dir.exists() {
+        let _ = std::fs::remove_dir_all(&ir_dir);
     }
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn get_model_info(local_dir: String) -> Result<serde_json::Value, String> {
-    let project_root = crate::get_project_root()?;
-    let dir = project_root.join(&local_dir);
+pub async fn get_model_info(app: tauri::AppHandle, local_dir: String) -> Result<serde_json::Value, String> {
+    let models_dir = get_models_dir(&app)?;
+    let model_name = local_dir.split('/').last().unwrap_or(&local_dir);
+    let dir = models_dir.join(model_name);
     if !dir.exists() {
         return Err(format!("目录不存在: {}", local_dir));
     }
@@ -848,27 +971,53 @@ pub async fn get_model_info(local_dir: String) -> Result<serde_json::Value, Stri
     let mut file_count: u64 = 0;
     let mut gguf_files: Vec<String> = Vec::new();
     let mut safetensors_files: Vec<String> = Vec::new();
+    let mut ov_xml_files: Vec<String> = Vec::new();
+    let mut ov_bin_files: Vec<String> = Vec::new();
 
     for entry in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
             total_size += entry.metadata().map(|m| m.len()).unwrap_or(0);
             file_count += 1;
             if let Some(ext) = entry.path().extension() {
+                let name = entry.file_name().to_string_lossy().to_string();
                 if ext.eq_ignore_ascii_case("gguf") {
-                    if let Some(name) = entry.file_name().to_str() {
-                        gguf_files.push(name.to_string());
-                    }
+                    gguf_files.push(name);
                 } else if ext.eq_ignore_ascii_case("safetensors") {
-                    if let Some(name) = entry.file_name().to_str() {
-                        safetensors_files.push(name.to_string());
+                    safetensors_files.push(name);
+                } else if ext.eq_ignore_ascii_case("xml") && name.starts_with("openvino_model") {
+                    ov_xml_files.push(name);
+                } else if ext.eq_ignore_ascii_case("bin") && name.starts_with("openvino_model") {
+                    ov_bin_files.push(name);
+                }
+            }
+        }
+    }
+
+    let ir_dir = models_dir.join(format!("{}_ov", model_name));
+    let mut ir_total_size: u64 = 0;
+    let mut ir_file_count: u64 = 0;
+    let mut has_ir = false;
+
+    if ir_dir.exists() {
+        for entry in WalkDir::new(&ir_dir).into_iter().filter_map(|e| e.ok()) {
+            if entry.file_type().is_file() {
+                ir_total_size += entry.metadata().map(|m| m.len()).unwrap_or(0);
+                ir_file_count += 1;
+                if let Some(ext) = entry.path().extension() {
+                    if ext.eq_ignore_ascii_case("xml") {
+                        has_ir = true;
                     }
                 }
             }
         }
     }
 
-    let has_model_files = !gguf_files.is_empty() || !safetensors_files.is_empty();
-    let model_format = if !gguf_files.is_empty() {
+    let has_model_files = !gguf_files.is_empty()
+        || !safetensors_files.is_empty()
+        || !ov_xml_files.is_empty();
+    let model_format = if !ov_xml_files.is_empty() {
+        "openvino_ir"
+    } else if !gguf_files.is_empty() {
         "gguf"
     } else if !safetensors_files.is_empty() {
         "safetensors"
@@ -880,102 +1029,15 @@ pub async fn get_model_info(local_dir: String) -> Result<serde_json::Value, Stri
         "size_bytes": total_size,
         "gguf_files": gguf_files,
         "safetensors_files": safetensors_files,
+        "ov_xml_files": ov_xml_files,
+        "ov_bin_files": ov_bin_files,
         "file_count": file_count,
         "has_model_files": has_model_files,
         "model_format": model_format,
+        "ir_converted": has_ir,
+        "ir_size_bytes": ir_total_size,
+        "ir_file_count": ir_file_count,
     });
 
     Ok(result)
-}
-
-#[tauri::command]
-pub async fn install_ollama(app: tauri::AppHandle) -> Result<String, String> {
-    let progress = InstallProgress {
-        status: "installing".to_string(),
-        message: "正在下载 Ollama 安装包...".to_string(),
-    };
-    let _ = app.emit("ollama-install-progress", progress.clone());
-
-    let download_url = "https://ollama.com/download/OllamaSetup.exe";
-    let data_dir = crate::get_data_dir(&app).map_err(|e| format!("无法获取数据目录: {}", e))?;
-    let ollama_dir = data_dir.join("ollama");
-    if !ollama_dir.exists() {
-        let _ = fs::create_dir_all(&ollama_dir);
-    }
-    let installer_path = ollama_dir.join("OllamaSetup.exe");
-
-    let app_clone = app.clone();
-    let installer_path_clone = installer_path.clone();
-
-    let mut child = Command::new("cmd");
-    child.args([
-        "/C",
-        "curl",
-        "-L",
-        "-o",
-        &installer_path.to_string_lossy(),
-        download_url,
-    ])
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null());
-    #[cfg(target_os = "windows")]
-    child.creation_flags(CREATE_NO_WINDOW);
-    let mut child = child
-        .spawn()
-        .map_err(|e| format!("启动下载进程失败: {}", e))?;
-
-    tokio::spawn(async move {
-        let result = child.wait().await;
-        match result {
-            Ok(exit_status) if exit_status.success() => {
-                if installer_path_clone.exists() {
-                    let progress = InstallProgress {
-                        status: "completed".to_string(),
-                        message: "Ollama 安装包已下载，正在启动安装程序...".to_string(),
-                    };
-                    let _ = app_clone.emit("ollama-install-progress", progress);
-
-                    let mut install_cmd = std::process::Command::new(
-                        installer_path_clone.to_string_lossy().as_ref(),
-                    );
-                    #[cfg(target_os = "windows")]
-                    install_cmd.creation_flags(CREATE_NO_WINDOW);
-                    let _ = install_cmd.spawn();
-
-                    let progress = InstallProgress {
-                        status: "installing".to_string(),
-                        message: "请在弹出的安装窗口中完成 Ollama 安装，安装完成后重启应用".to_string(),
-                    };
-                    let _ = app_clone.emit("ollama-install-progress", progress);
-                } else {
-                    let progress = InstallProgress {
-                        status: "error".to_string(),
-                        message: "下载的安装包不存在".to_string(),
-                    };
-                    let _ = app_clone.emit("ollama-install-progress", progress);
-                }
-            }
-            Ok(exit_status) => {
-                let progress = InstallProgress {
-                    status: "error".to_string(),
-                    message: format!("下载失败，退出码: {}", exit_status),
-                };
-                let _ = app_clone.emit("ollama-install-progress", progress);
-            }
-            Err(e) => {
-                let progress = InstallProgress {
-                    status: "error".to_string(),
-                    message: format!("下载进程异常: {}", e),
-                };
-                let _ = app_clone.emit("ollama-install-progress", progress);
-            }
-        }
-    });
-
-    Ok("下载已启动".to_string())
-}
-
-#[tauri::command]
-pub async fn get_ollama_models() -> Result<serde_json::Value, String> {
-    ollama_api_get("/api/tags").await
 }

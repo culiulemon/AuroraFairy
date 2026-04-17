@@ -9,8 +9,16 @@ interface EnvironmentStatus {
   python: boolean
   python_version: string | null
   modelscope: boolean
-  ollama: boolean
-  ollama_version: string | null
+  openvino: boolean
+  openvino_version: string | null
+  openvino_genai: boolean
+  optimum: boolean
+  intel_gpu: boolean
+}
+
+interface DependencyInstallProgress {
+  status: string
+  message: string
 }
 
 interface DownloadProgress {
@@ -28,11 +36,6 @@ interface ServerStatus {
   message: string
 }
 
-interface InstallProgress {
-  status: string
-  message: string
-}
-
 export function useModelManager() {
   const environmentStatus = ref<EnvironmentStatus | null>(null)
   const isDownloading = ref(false)
@@ -42,19 +45,37 @@ export function useModelManager() {
 
   const currentDownloadDisplayName = ref<string>('')
 
-  const isInstallingOllama = ref(false)
-  const ollamaInstallProgress = ref<InstallProgress | null>(null)
-
   let unlistenDownload: UnlistenFn | null = null
   let unlistenServer: UnlistenFn | null = null
-  let unlistenOllamaInstall: UnlistenFn | null = null
+  let unlistenDependency: UnlistenFn | null = null
+
+  const installingPackage = ref<string | null>(null)
+  const dependencyInstallMessage = ref<string | null>(null)
+
+  const ENV_STORAGE_KEY = 'aurorafairy-env-status'
+
+  function loadCachedEnvironment(): EnvironmentStatus | null {
+    try {
+      const stored = localStorage.getItem(ENV_STORAGE_KEY)
+      if (stored) return JSON.parse(stored)
+    } catch { /* ignore */ }
+    return null
+  }
+
+  function saveEnvironmentStatus(status: EnvironmentStatus) {
+    try {
+      localStorage.setItem(ENV_STORAGE_KEY, JSON.stringify(status))
+    } catch { /* ignore */ }
+  }
 
   async function checkEnvironment() {
     try {
       environmentStatus.value = await invoke<EnvironmentStatus>('check_environment')
+      if (environmentStatus.value) {
+        saveEnvironmentStatus(environmentStatus.value)
+      }
     } catch (e) {
       console.error('Failed to check environment:', e)
-      environmentStatus.value = null
     }
   }
 
@@ -92,13 +113,13 @@ export function useModelManager() {
     try {
       const config = model.deployConfig || getDefaultDeployConfig()
       const modelName = model.localPath.split('/').pop() || model.displayName
-      await invoke('deploy_model', {
+      const port = await invoke<number>('deploy_model', {
         modelPath: model.localPath,
         modelName,
         ggufFile: '',
         config
       })
-      updateLocalModel(model.id, { status: 'running', port: 11434 })
+      updateLocalModel(model.id, { status: 'running', port })
       refreshModels()
     } catch (e: any) {
       const msg = String(e)
@@ -141,10 +162,11 @@ export function useModelManager() {
       .filter(c => /[a-zA-Z0-9\-_]/.test(c))
       .join('')
       .toLowerCase()
+    const port = model.port || model.deployConfig?.port || 8000
     const newProvider = {
       id: `local-${model.id}`,
       displayName: `${model.displayName} (本地)`,
-      baseUrl: 'http://127.0.0.1:11434/v1',
+      baseUrl: `http://127.0.0.1:${port}/v1`,
       apiKey: 'local',
       model: modelName,
       protocol: 'custom' as const,
@@ -159,30 +181,20 @@ export function useModelManager() {
     models.value = loadLocalModels()
   }
 
-  async function installOllama() {
-    isInstallingOllama.value = true
-    ollamaInstallProgress.value = null
+  async function installDependency(packageName: string) {
+    installingPackage.value = packageName
+    dependencyInstallMessage.value = null
     try {
-      await invoke('install_ollama')
+      await invoke('install_dependency', { package: packageName })
     } catch (e) {
-      console.error('Failed to start Ollama install:', e)
-      isInstallingOllama.value = false
-      ollamaInstallProgress.value = null
-    }
-  }
-
-  async function getOllamaModels(): Promise<any> {
-    try {
-      return await invoke('get_ollama_models')
-    } catch (e) {
-      console.error('Failed to get Ollama models:', e)
-      return null
+      console.error('Failed to install dependency:', e)
+      installingPackage.value = null
     }
   }
 
   onMounted(async () => {
     models.value = loadLocalModels()
-    await checkEnvironment()
+    environmentStatus.value = loadCachedEnvironment()
 
     unlistenDownload = await listen<DownloadProgress>('model-download-progress', (event) => {
       downloadProgress.value = event.payload
@@ -198,7 +210,8 @@ export function useModelManager() {
             localPath,
             sizeBytes: info?.size_bytes || 0,
             status: 'ready' as ModelStatus,
-            addedAt: new Date().toISOString()
+            addedAt: new Date().toISOString(),
+            convertedToIR: info?.ir_converted || false,
           }
           addLocalModel(newModel)
           isDownloading.value = false
@@ -232,7 +245,7 @@ export function useModelManager() {
       serverStatuses.value = new Map(serverStatuses.value)
       const model = models.value.find(m => m.modelId === event.payload.model_id)
       if (model) {
-        const newStatus: ModelStatus = event.payload.status === 'running' ? 'running' : event.payload.status === 'stopped' ? 'ready' : event.payload.status === 'importing' ? 'downloading' : 'error'
+        const newStatus: ModelStatus = event.payload.status === 'running' ? 'running' : event.payload.status === 'stopped' ? 'ready' : event.payload.status === 'importing' ? 'converting' : event.payload.status === 'imported' ? 'ready' : 'error'
         updateLocalModel(model.id, { status: newStatus, port: event.payload.port })
         if (event.payload.status === 'error' && event.payload.message) {
           deployError.value = `部署失败: ${event.payload.message}`
@@ -241,14 +254,11 @@ export function useModelManager() {
       }
     })
 
-    unlistenOllamaInstall = await listen<InstallProgress>('ollama-install-progress', (event) => {
-      ollamaInstallProgress.value = event.payload
-      if (event.payload.status === 'completed') {
-        isInstallingOllama.value = false
-        ollamaInstallProgress.value = null
+    unlistenDependency = await listen<DependencyInstallProgress>('dependency-install-progress', (event) => {
+      dependencyInstallMessage.value = event.payload.message
+      if (event.payload.status === 'completed' || event.payload.status === 'error') {
+        installingPackage.value = null
         checkEnvironment()
-      } else if (event.payload.status === 'error') {
-        isInstallingOllama.value = false
       }
     })
   })
@@ -256,7 +266,7 @@ export function useModelManager() {
   onUnmounted(() => {
     unlistenDownload?.()
     unlistenServer?.()
-    unlistenOllamaInstall?.()
+    unlistenDependency?.()
   })
 
   return {
@@ -265,9 +275,9 @@ export function useModelManager() {
     downloadProgress,
     serverStatuses,
     models,
-    isInstallingOllama,
-    ollamaInstallProgress,
     deployError,
+    installingPackage,
+    dependencyInstallMessage,
     checkEnvironment,
     downloadModel,
     cancelDownload,
@@ -276,7 +286,6 @@ export function useModelManager() {
     deleteModel,
     addAsProvider,
     refreshModels,
-    installOllama,
-    getOllamaModels,
+    installDependency,
   }
 }

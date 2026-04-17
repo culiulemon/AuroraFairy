@@ -28,7 +28,7 @@ class DownloadProgressPrinter:
             self._downloaded = 0
             self._last_percent = 0.0
             self._last_write_time = 0
-        _write_progress("downloading", filename, 0.0, f"正在下载: {filename}")
+            _write_progress_unlocked("downloading", filename, 0.0, f"正在下载: {filename}")
 
     def update(self, chunk_size):
         with DownloadProgressPrinter._lock:
@@ -41,14 +41,14 @@ class DownloadProgressPrinter:
             if percent != self._last_percent or now - self._last_write_time > 1.0:
                 self._last_percent = percent
                 self._last_write_time = now
-                _write_progress("downloading", self.filename, percent, f"正在下载: {self.filename} ({percent}%)")
+                _write_progress_unlocked("downloading", self.filename, percent, f"正在下载: {self.filename} ({percent}%)")
 
     def end(self):
         with DownloadProgressPrinter._lock:
-            _write_progress("downloading", self.filename, 100.0, f"已完成: {self.filename}")
+            _write_progress_unlocked("downloading", self.filename, 100.0, f"已完成: {self.filename}")
 
 
-def _write_progress(status, current_file, percent, message):
+def _write_progress_unlocked(status, current_file, percent, message):
     if not DownloadProgressPrinter._progress_file:
         return
     try:
@@ -58,11 +58,15 @@ def _write_progress(status, current_file, percent, message):
             "progress_percent": percent,
             "message": message,
         }
-        with DownloadProgressPrinter._lock:
-            with open(DownloadProgressPrinter._progress_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False)
+        with open(DownloadProgressPrinter._progress_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
     except Exception:
         pass
+
+
+def _write_progress(status, current_file, percent, message):
+    with DownloadProgressPrinter._lock:
+        _write_progress_unlocked(status, current_file, percent, message)
 
 
 def main():

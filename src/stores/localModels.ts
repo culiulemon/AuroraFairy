@@ -1,5 +1,5 @@
 export type ModelType = 'llm' | 'embedding' | 'tts' | 'other'
-export type ModelStatus = 'downloading' | 'ready' | 'running' | 'error' | 'stopping'
+export type ModelStatus = 'downloading' | 'converting' | 'ready' | 'running' | 'error' | 'stopping'
 
 export interface LocalModel {
   id: string
@@ -12,14 +12,15 @@ export interface LocalModel {
   port?: number
   deployedAt?: string
   addedAt: string
-  ggufFile?: string
+  convertedToIR?: boolean
+  irPath?: string
   deployConfig?: DeployConfig
 }
 
 export interface DeployConfig {
   ctxSize: number
   threads: number
-  gpuLayers: number
+  device: string
   port: number
 }
 
@@ -28,7 +29,7 @@ const STORAGE_KEY = 'aurorafairy-local-models'
 const defaultDeployConfig: DeployConfig = {
   ctxSize: 2048,
   threads: 4,
-  gpuLayers: 0,
+  device: 'GPU',
   port: 0
 }
 

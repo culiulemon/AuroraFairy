@@ -48,8 +48,13 @@
             <span class="rule-category-tag" :class="'tag-' + rule.category">{{ categoryLabelMap[rule.category] }}</span>
             <span v-if="rule.isBuiltIn" class="rule-built-in-tag">内置</span>
           </div>
-          <div class="rule-toggle" :class="{ active: rule.enabled }" @click="handleToggle(rule)">
-            <div class="toggle-thumb"></div>
+          <div class="rule-toggle-wrapper">
+            <span class="rule-status-text" :class="rule.enabled ? 'active' : 'inactive'">
+              {{ rule.enabled ? '管控中' : '未管控' }}
+            </span>
+            <div class="rule-toggle" :class="{ active: rule.enabled }" @click="handleToggle(rule)">
+              <div class="toggle-thumb"></div>
+            </div>
           </div>
         </div>
         <div class="rule-description">{{ rule.description }}</div>
@@ -491,6 +496,27 @@ const closeFormDialog = () => {
   color: var(--color-primary);
   font-weight: 600;
   white-space: nowrap;
+}
+
+.rule-toggle-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.rule-status-text {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.rule-status-text.active {
+  color: var(--color-primary);
+}
+
+.rule-status-text.inactive {
+  color: var(--color-text-muted);
 }
 
 .rule-toggle {
