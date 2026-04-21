@@ -1,11 +1,11 @@
 {
   "name": "aurorafairy",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "node scripts/build-fairy-action.mjs && vite",
-    "build": "node scripts/build-fairy-action.mjs && vue-tsc --noEmit && vite build",
+    "build": "node scripts/increment-version.mjs && node scripts/build-fairy-action.mjs && vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "pnpm tauri dev",

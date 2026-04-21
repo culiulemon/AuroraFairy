@@ -14,6 +14,7 @@ export interface ApiProvider {
 export interface ApiSettings {
   providers: ApiProvider[]
   defaultProviderId: string | null
+  useBackendProxy?: boolean
   fbmEnabled?: boolean
   fbmProviderId?: string | null
   fbmEmbeddingProviderId?: string | null

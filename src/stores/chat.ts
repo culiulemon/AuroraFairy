@@ -2,6 +2,7 @@ import { loadSettings } from './settings'
 import type { Tool } from '../types/tool'
 import type { ToolUseBlock } from '../types/message'
 import { addDebugLog } from './debugStore'
+import { invoke } from '@tauri-apps/api/core'
 
 function repairTruncatedJson(raw: string): Record<string, unknown> | null {
   const trimmed = raw.trim()
@@ -54,6 +55,30 @@ function safeParseToolArgs(rawArgs: string): Record<string, unknown> {
     }
     console.error('[Chat] 工具参数最终解析失败:', rawArgs)
     return { _raw: rawArgs }
+  }
+}
+
+export async function proxyChatRequest(
+  url: string,
+  headers: Record<string, string>,
+  body: Record<string, unknown>
+): Promise<{ status: number; data: any }> {
+  const proxyHeaders: Record<string, string> = {}
+  for (const [key, value] of Object.entries(headers)) {
+    proxyHeaders[key] = value
+  }
+
+  const result = await invoke<{ status: number; headers: Record<string, string>; body: string }>('proxy_chat', {
+    request: {
+      url,
+      headers: proxyHeaders,
+      body
+    }
+  })
+
+  return {
+    status: result.status,
+    data: JSON.parse(result.body)
   }
 }
 
@@ -142,6 +167,29 @@ export async function generateConversationTitle(
   const url = provider.baseUrl.endsWith('/chat/completions')
     ? provider.baseUrl
     : `${provider.baseUrl}/chat/completions`
+
+  const useProxy = settings.useBackendProxy === true
+
+  if (useProxy) {
+    try {
+      const result = await proxyChatRequest(url, headers, body)
+
+      if (!result.status.toString().startsWith('2')) {
+        console.warn('[Chat] 生成标题失败:', result.status)
+        return '新会话'
+      }
+
+      if (provider.protocol === 'anthropic') {
+        return result.data.content?.[0]?.text?.trim() || '新会话'
+      }
+
+      const title = result.data.choices?.[0]?.message?.content?.trim()
+      return title || '新会话'
+    } catch (error) {
+      console.warn('[Chat] 生成标题请求失败:', error)
+      return '新会话'
+    }
+  }
 
   try {
     const response = await fetch(url, {
@@ -249,17 +297,63 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
     hasTools: !!request.tools?.length
   })
 
+  const useProxy = settings.useBackendProxy === true
+
   if (request.onChunk) {
+    if (useProxy) {
+      return await proxyStreamChat(
+        url,
+        headers,
+        body,
+        provider.protocol,
+        request.onChunk,
+        request.onReasoningChunk,
+        request.onToolCall
+      )
+    }
     return await streamChat(
-      url, 
-      headers, 
-      body, 
-      provider.protocol, 
-      request.onChunk, 
-      request.onReasoningChunk, 
+      url,
+      headers,
+      body,
+      provider.protocol,
+      request.onChunk,
+      request.onReasoningChunk,
       request.onToolCall,
       request.signal
     )
+  }
+
+  if (useProxy) {
+    try {
+      const result = await proxyChatRequest(url, headers, body)
+
+      addDebugLog('response', `Proxy Response ${result.status}`, JSON.stringify(result.data, null, 2), {
+        provider: provider.displayName || provider.id,
+        status: result.status
+      })
+
+      if (!result.status.toString().startsWith('2')) {
+        throw new Error(`API 请求失败: ${result.status} - ${JSON.stringify(result.data)}`)
+      }
+
+      if (provider.protocol === 'anthropic') {
+        return {
+          content: result.data.content?.[0]?.text || '',
+          usage: result.data.usage
+        }
+      }
+
+      const toolCalls = extractToolCalls(result.data.choices?.[0]?.message?.tool_calls)
+      return {
+        content: result.data.choices?.[0]?.message?.content || '',
+        usage: result.data.usage,
+        toolCalls
+      }
+    } catch (error) {
+      addDebugLog('error', 'Proxy Call Failed', String(error), { url })
+      console.error('代理 API 调用失败:', error)
+      throw error
+    }
   }
 
   try {
@@ -464,6 +558,166 @@ async function streamChat(
   })
 
   console.log(`[Chat] Stream ended. finish_reason: ${lastFinishReason}, content length: ${fullContent.length}, toolCalls: ${collectedToolCalls.length}`)
+
+  for (let i = 0; i < collectedToolCalls.length; i++) {
+    const rawArgs = toolCallArgsBuffers.get(i) || ''
+    if (rawArgs) {
+      collectedToolCalls[i].input = safeParseToolArgs(rawArgs)
+    }
+  }
+
+  return { content: fullContent, usage, toolCalls: collectedToolCalls }
+}
+
+async function proxyStreamChat(
+  url: string,
+  headers: Record<string, string>,
+  body: Record<string, unknown>,
+  protocol: string,
+  onChunk: (chunk: string) => void,
+  onReasoningChunk: ((chunk: string) => void) | undefined,
+  onToolCall: ((toolCall: ToolUseBlock) => void) | undefined
+): Promise<ChatResponse> {
+  const { listen } = await import('@tauri-apps/api/event')
+
+  let fullContent = ''
+  let usage: ChatResponse['usage']
+  const collectedToolCalls: ToolUseBlock[] = []
+  const toolCallArgsBuffers: Map<number, string> = new Map()
+  let currentToolCallIndex = -1
+  let done = false
+
+  const chunkListener = listen<number[]>('proxy-chat-chunk', (event) => {
+    const bytes = new Uint8Array(event.payload)
+    const chunk = new TextDecoder().decode(bytes, { stream: true })
+    const lines = chunk.split('\n')
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6)
+        if (data === '[DONE]') {
+          done = true
+          continue
+        }
+
+        try {
+          const parsed = JSON.parse(data)
+
+          if (protocol === 'anthropic') {
+            if (parsed.type === 'content_block_delta') {
+              const text = parsed.delta?.text || ''
+              fullContent += text
+              onChunk(text)
+            }
+          } else {
+            const reasoningContent = parsed.choices?.[0]?.delta?.reasoning_content || ''
+            const content = parsed.choices?.[0]?.delta?.content || ''
+
+            if (reasoningContent && onReasoningChunk) {
+              onReasoningChunk(reasoningContent)
+            }
+            if (content) {
+              fullContent += content
+              onChunk(content)
+            }
+            if (parsed.usage) {
+              usage = parsed.usage
+            }
+
+            if (parsed.choices?.[0]?.finish_reason) {
+            }
+
+            const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls
+            if (deltaToolCalls && Array.isArray(deltaToolCalls)) {
+              for (const delta of deltaToolCalls) {
+                if (delta.index !== undefined) {
+                  if (delta.index !== currentToolCallIndex) {
+                    currentToolCallIndex = delta.index
+                    collectedToolCalls.push({
+                      type: 'tool_use',
+                      id: delta.id || '',
+                      name: '',
+                      input: {}
+                    })
+                  }
+                }
+
+                if (delta.function?.name) {
+                  const lastIndex = collectedToolCalls.length - 1
+                  if (lastIndex >= 0) {
+                    collectedToolCalls[lastIndex].name = delta.function.name
+                  }
+                }
+
+                if (delta.function?.arguments) {
+                  const lastIndex = collectedToolCalls.length - 1
+                  if (lastIndex >= 0) {
+                    const buf = toolCallArgsBuffers.get(currentToolCallIndex) || ''
+                    toolCallArgsBuffers.set(currentToolCallIndex, buf + delta.function.arguments)
+                  }
+                }
+
+                if (delta.index !== undefined && delta.function?.name) {
+                  const toolCall = collectedToolCalls.find(tc => tc.name === delta.function?.name)
+                  if (toolCall && onToolCall) {
+                    onToolCall(toolCall)
+                  }
+                }
+              }
+            }
+          }
+        } catch {
+          // 忽略解析错误
+        }
+      }
+    }
+  })
+
+  const errorListener = listen<string>('proxy-chat-error', (event) => {
+    console.error('[Chat] Proxy stream error:', event.payload)
+  })
+
+  const doneListener = listen('proxy-chat-done', () => {
+    done = true
+  })
+
+  try {
+    await invoke('proxy_chat_stream', {
+      request: {
+        url,
+        headers,
+        body
+      }
+    })
+  } catch (error) {
+    console.error('[Chat] Proxy stream invoke failed:', error)
+    addDebugLog('error', 'Proxy Stream Invoke Failed', String(error), { url })
+    throw error
+  }
+
+  await new Promise<void>((resolve) => {
+    const checkDone = setInterval(() => {
+      if (done) {
+        clearInterval(checkDone)
+        resolve()
+      }
+    }, 50)
+  })
+
+  ;(await chunkListener)()
+  ;(await errorListener)()
+  ;(await doneListener)()
+
+  addDebugLog('response', `Proxy Stream Complete`, fullContent + (collectedToolCalls.length > 0
+    ? '\n\n--- Tool Calls ---\n' + collectedToolCalls.map(tc =>
+        `[${tc.name}]\n${JSON.stringify(tc.input, null, 2)}`
+      ).join('\n\n')
+    : ''
+  ), {
+    usage,
+    toolCallCount: collectedToolCalls.length,
+    contentLength: fullContent.length
+  })
 
   for (let i = 0; i < collectedToolCalls.length; i++) {
     const rawArgs = toolCallArgsBuffers.get(i) || ''

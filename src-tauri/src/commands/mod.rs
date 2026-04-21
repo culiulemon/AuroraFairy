@@ -9,6 +9,7 @@ pub mod fbm_fs;
 pub mod qdrant_manager;
 pub mod feishu;
 pub mod weixin;
+pub mod proxy;
 
 pub use shell::shell_execute;
 pub use file::{file_read, file_write, file_delete, file_edit, file_glob, file_grep};
@@ -21,5 +22,6 @@ pub use local_models::{
     install_dependency,
 };
 pub use browser::{BrowserManager, browser_start, browser_execute, browser_stop};
+pub use proxy::{proxy_chat, proxy_chat_stream};
 pub mod fap;
 

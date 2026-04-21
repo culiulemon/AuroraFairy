@@ -214,14 +214,15 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import BaseDialog from './BaseDialog.vue'
 import BaseSelect from './BaseSelect.vue'
 import type { SelectOption } from './BaseSelect.vue'
-import { 
-  ApiProvider, 
-  loadSettings, 
-  saveSettings, 
-  protocolOptions, 
+import {
+  ApiProvider,
+  loadSettings,
+  saveSettings,
+  protocolOptions,
   providerPresets,
   validateProviderId as validateId
 } from '../stores/settings'
+import { proxyChatRequest } from '../stores/chat'
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error'
 
@@ -359,10 +360,10 @@ const handleSetDefault = (id: string) => {
 async function testConnection(provider: ApiProvider) {
   connectionStatus.value[provider.id] = 'testing'
   const isLocal = provider.baseUrl.includes('127.0.0.1') || provider.baseUrl.includes('localhost')
+  const settings = loadSettings()
+  const useProxy = settings.useBackendProxy === true
 
   try {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), isLocal ? 120000 : 15000)
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
     }
@@ -400,21 +401,28 @@ async function testConnection(provider: ApiProvider) {
       }
     }
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: controller.signal
-    })
-
-    clearTimeout(timeout)
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`${response.status}: ${errorText.slice(0, 200)}`)
+    if (useProxy) {
+      const result = await proxyChatRequest(url, headers, body)
+      if (!result.status.toString().startsWith('2')) {
+        throw new Error(`${result.status}: ${JSON.stringify(result.data)}`)
+      }
+      connectionStatus.value[provider.id] = 'success'
+    } else {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), isLocal ? 120000 : 15000)
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal
+      })
+      clearTimeout(timeout)
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`${response.status}: ${errorText.slice(0, 200)}`)
+      }
+      connectionStatus.value[provider.id] = 'success'
     }
-
-    connectionStatus.value[provider.id] = 'success'
   } catch (error: unknown) {
     connectionStatus.value[provider.id] = 'error'
     if (error instanceof Error && error.name === 'AbortError') {

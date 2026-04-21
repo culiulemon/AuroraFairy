@@ -26,6 +26,7 @@ use commands::qdrant_manager::{QdrantState, qdrant_start, qdrant_stop, qdrant_st
 use commands::feishu::{FeishuManager, feishu_connect, feishu_disconnect, feishu_reply_message, feishu_get_status};
 use commands::weixin::{WeixinManager, weixin_get_qrcode, weixin_connect, weixin_disconnect, weixin_reply_message, weixin_get_status, weixin_has_credentials};
 use commands::fap::{BridgeManager, fap_bridge_start, fap_bridge_send, fap_bridge_stop, fap_install, fap_uninstall, fap_list};
+use commands::proxy::{proxy_chat, proxy_chat_stream};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct AppConfig {
@@ -569,7 +570,9 @@ pub fn run() {
             fap_bridge_stop,
             fap_install,
             fap_uninstall,
-            fap_list
+            fap_list,
+            proxy_chat,
+            proxy_chat_stream
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

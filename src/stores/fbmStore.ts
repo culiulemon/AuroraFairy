@@ -20,6 +20,8 @@ const COREFILE_TEMPLATES: Record<string, string> = {
 }
 
 let fbm: any = null
+let llm: any = null
+let embedding: any = null
 let initPromise: Promise<void> | null = null
 let fbmModule: any = null
 let fbmLoadFailed = false
@@ -92,17 +94,33 @@ async function doInit(
     const qdrantPort = await invoke<number>('qdrant_start', { workingDir: baseDir })
     console.log('[FBM] Qdrant started on port:', qdrantPort)
 
-    const llm = new mod.OpenAILLMAdapter({
-      baseUrl: provider.baseUrl,
-      apiKey: provider.apiKey,
-      model: provider.model,
-    })
+    const useProxy = settings.useBackendProxy === true
 
-    const embedding = new mod.OpenAIEmbeddingAdapter({
-      baseUrl: embProvider.baseUrl,
-      apiKey: embProvider.apiKey,
-      model: embProvider.model,
-    })
+    if (useProxy) {
+      const { ProxyLLMAdapter } = await import('../fbm/src/core/adapters/proxy-llm.js')
+      const { ProxyEmbeddingAdapter } = await import('../fbm/src/core/adapters/proxy-embedding.js')
+      llm = new ProxyLLMAdapter({
+        baseUrl: provider.baseUrl,
+        apiKey: provider.apiKey,
+        model: provider.model,
+      })
+      embedding = new ProxyEmbeddingAdapter({
+        baseUrl: embProvider.baseUrl,
+        apiKey: embProvider.apiKey,
+        model: embProvider.model,
+      })
+    } else {
+      llm = new mod.OpenAILLMAdapter({
+        baseUrl: provider.baseUrl,
+        apiKey: provider.apiKey,
+        model: provider.model,
+      })
+      embedding = new mod.OpenAIEmbeddingAdapter({
+        baseUrl: embProvider.baseUrl,
+        apiKey: embProvider.apiKey,
+        model: embProvider.model,
+      })
+    }
 
     const config = {
       memoryDir,
@@ -144,6 +162,15 @@ export async function getEmbeddingAdapter(): Promise<EmbeddingAdapter | null> {
   const provider = settings.providers.find(p => p.id === embProviderId)
   if (!provider) return null
 
+  if (settings.useBackendProxy === true) {
+    const { ProxyEmbeddingAdapter } = await import('../fbm/src/core/adapters/proxy-embedding.js')
+    return new ProxyEmbeddingAdapter({
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKey,
+      model: provider.model,
+    })
+  }
+
   const { OpenAIEmbeddingAdapter } = await import('../fbm/src/core/adapters/openai-embedding.js')
   return new OpenAIEmbeddingAdapter({
     baseUrl: provider.baseUrl,
@@ -159,6 +186,15 @@ export async function getLLMAdapter(): Promise<LLMAdapter | null> {
 
   const provider = settings.providers.find(p => p.id === providerId)
   if (!provider) return null
+
+  if (settings.useBackendProxy === true) {
+    const { ProxyLLMAdapter } = await import('../fbm/src/core/adapters/proxy-llm.js')
+    return new ProxyLLMAdapter({
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKey,
+      model: provider.model,
+    })
+  }
 
   const { OpenAILLMAdapter } = await import('../fbm/src/core/adapters/openai-llm.js')
   return new OpenAILLMAdapter({

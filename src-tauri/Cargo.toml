@@ -31,7 +31,7 @@ base64 = "0.22"
 regex = "1"
 shellexpand = "3"
 notify = "7"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 url = "2"
 encoding_rs = "0.8"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
