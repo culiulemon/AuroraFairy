@@ -37,6 +37,7 @@ const STORAGE_KEY = 'aurorafairy-settings'
 const defaultSettings: ApiSettings = {
   providers: [],
   defaultProviderId: null,
+  useBackendProxy: true,
   fbmEnabled: false,
   fbmProviderId: null,
   fbmEmbeddingProviderId: null,
