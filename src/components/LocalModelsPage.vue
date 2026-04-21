@@ -28,17 +28,29 @@
           </div>
             <div class="settings-inner-content">
               <div class="env-check-list" v-if="environmentStatus">
+                <h4 class="env-group-title">系统状态</h4>
                 <div class="env-check-row" :class="{ ok: environmentStatus.python, fail: !environmentStatus.python }">
                   <span class="env-check-name">
                     Python
                     <span class="env-check-ver" v-if="environmentStatus.python_version">{{ environmentStatus.python_version }}</span>
                   </span>
                   <span class="env-check-status">
-                    <template v-if="environmentStatus.python">
-                      <span class="env-check-ok">正常</span>
-                    </template>
+                    <span class="env-check-ok" v-if="environmentStatus.python">正常</span>
                     <span class="env-check-missing" v-else>未安装</span>
                   </span>
+                  <button class="env-info-btn" @click="showDepInfo('python')" title="查看详情">ⓘ</button>
+                </div>
+                <div class="env-check-row" :class="{ ok: environmentStatus.gpus.length > 0, fail: environmentStatus.gpus.length === 0 }">
+                  <span class="env-check-name">GPU</span>
+                  <span class="env-check-status">
+                    <template v-if="environmentStatus.gpus.length > 0">
+                      <span class="env-check-ok" v-for="(gpu, i) in environmentStatus.gpus" :key="i" :title="gpu.name">
+                        {{ gpu.vendor }}
+                      </span>
+                    </template>
+                    <span class="env-check-missing" v-else>未检测到</span>
+                  </span>
+                  <button class="env-info-btn" @click="showDepInfo('gpu')" title="查看详情">ⓘ</button>
                 </div>
                 <div class="env-check-row" :class="{ ok: environmentStatus.modelscope, fail: !environmentStatus.modelscope }">
                   <span class="env-check-name">ModelScope</span>
@@ -49,9 +61,45 @@
                         <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
                         <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
                       </svg>
-                      {{ installingPackage === 'modelscope' ? '安装中...' : '安装' }}
+                      {{ installBtnText('modelscope') }}
                     </button>
                   </span>
+                  <button class="env-info-btn" @click="showDepInfo('modelscope')" title="查看详情">ⓘ</button>
+                </div>
+
+                <h4 class="env-group-title">
+                  推理后端
+                  <span class="env-group-hint" v-if="envRecommendation">{{ envRecommendation }}</span>
+                </h4>
+                <div class="env-check-row" :class="{ ok: environmentStatus.llama_cpp, fail: !environmentStatus.llama_cpp }">
+                  <span class="env-check-name">llama.cpp</span>
+                  <span class="env-check-status">
+                    <span class="env-check-ok" v-if="environmentStatus.llama_cpp">已安装</span>
+                    <span class="env-recommend-tag" v-if="!environmentStatus.llama_cpp && envRecommendLLamacpp">推荐</span>
+                    <button v-if="!environmentStatus.llama_cpp" class="env-install-btn" @click="installDependency('llama-cpp-python')" :disabled="!!installingPackage">
+                      <svg v-if="installingPackage === 'llama-cpp-python'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
+                        <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
+                        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                      </svg>
+                      {{ installBtnText('llama-cpp-python') }}
+                    </button>
+                  </span>
+                  <button class="env-info-btn" @click="showDepInfo('llamacpp')" title="查看详情">ⓘ</button>
+                </div>
+                <div class="env-check-row" :class="{ ok: environmentStatus.oneapi, fail: !environmentStatus.oneapi }" v-if="environmentStatus.gpus.some(g => g.vendor === 'Intel')">
+                  <span class="env-check-name">Intel oneAPI</span>
+                  <span class="env-check-status">
+                    <span class="env-check-ok" v-if="environmentStatus.oneapi">已安装</span>
+                    <span class="env-recommend-tag" v-if="!environmentStatus.oneapi">推荐</span>
+                    <button v-if="!environmentStatus.oneapi" class="env-install-btn" @click="installDependency('oneapi')">
+                      <svg v-if="installingPackage === 'oneapi'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
+                        <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
+                        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                      </svg>
+                      {{ installingPackage === 'oneapi' ? (dependencyInstallMessage || '打开中...') : '下载' }}
+                    </button>
+                  </span>
+                  <button class="env-info-btn" @click="showDepInfo('oneapi')" title="查看详情">ⓘ</button>
                 </div>
                 <div class="env-check-row" :class="{ ok: environmentStatus.openvino, fail: !environmentStatus.openvino }">
                   <span class="env-check-name">
@@ -59,17 +107,16 @@
                     <span class="env-check-ver" v-if="environmentStatus.openvino_version">{{ environmentStatus.openvino_version }}</span>
                   </span>
                   <span class="env-check-status">
-                    <template v-if="environmentStatus.openvino">
-                      <span class="env-check-ok">正常</span>
-                    </template>
+                    <span class="env-check-ok" v-if="environmentStatus.openvino">正常</span>
                     <button v-else class="env-install-btn" @click="handleInstallDep('openvino')" :disabled="!!installingPackage">
                       <svg v-if="installingPackage === 'openvino'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
                         <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
                         <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
                       </svg>
-                      {{ installingPackage === 'openvino' ? '安装中...' : '安装' }}
+                      {{ installBtnText('openvino') }}
                     </button>
                   </span>
+                  <button class="env-info-btn" @click="showDepInfo('openvino')" title="查看详情">ⓘ</button>
                 </div>
                 <div class="env-check-row" :class="{ ok: environmentStatus.openvino_genai, fail: !environmentStatus.openvino_genai }">
                   <span class="env-check-name">OpenVINO GenAI</span>
@@ -80,9 +127,10 @@
                         <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
                         <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
                       </svg>
-                      {{ installingPackage === 'openvino-genai' ? '安装中...' : '安装' }}
+                      {{ installBtnText('openvino-genai') }}
                     </button>
                   </span>
+                  <button class="env-info-btn" @click="showDepInfo('openvino-genai')" title="查看详情">ⓘ</button>
                 </div>
                 <div class="env-check-row" :class="{ ok: environmentStatus.optimum, fail: !environmentStatus.optimum }">
                   <span class="env-check-name">Optimum (Intel)</span>
@@ -93,16 +141,24 @@
                         <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
                         <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
                       </svg>
-                      {{ installingPackage === 'optimum[openvino]' ? '安装中...' : '安装' }}
+                      {{ installBtnText('optimum[openvino]') }}
                     </button>
                   </span>
+                  <button class="env-info-btn" @click="showDepInfo('optimum')" title="查看详情">ⓘ</button>
                 </div>
-                <div class="env-check-row" :class="{ ok: environmentStatus.intel_gpu, fail: !environmentStatus.intel_gpu }">
-                  <span class="env-check-name">Intel GPU</span>
+                <div class="env-check-row" :class="{ ok: environmentStatus.transformers, fail: !environmentStatus.transformers }">
+                  <span class="env-check-name">Transformers</span>
                   <span class="env-check-status">
-                    <span class="env-check-ok" v-if="environmentStatus.intel_gpu">正常</span>
-                    <span class="env-check-missing" v-else>未检测到</span>
+                    <span class="env-check-ok" v-if="environmentStatus.transformers">已安装</span>
+                    <button v-else class="env-install-btn" @click="handleInstallDep('transformers')" :disabled="!!installingPackage">
+                      <svg v-if="installingPackage === 'transformers'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
+                        <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
+                        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                      </svg>
+                      {{ installBtnText('transformers') }}
+                    </button>
                   </span>
+                  <button class="env-info-btn" @click="showDepInfo('transformers')" title="查看详情">ⓘ</button>
                 </div>
               </div>
               <div class="env-loading" v-else>
@@ -118,8 +174,30 @@
                 </svg>
                 <span>正在检测环境...</span>
               </div>
-              <div class="dep-install-msg" v-if="dependencyInstallMessage">
+              <div class="dep-install-msg" v-if="dependencyInstallMessage && !installingPackage">
                 <span>{{ dependencyInstallMessage }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-section">
+          <div class="settings-inner-card">
+            <div class="settings-inner-header">
+              <h3>模型存储</h3>
+            </div>
+            <div class="settings-inner-content">
+              <div class="models-dir-row">
+                <span class="models-dir-label">下载目录</span>
+                <div class="models-dir-path">
+                  <span class="models-dir-value">{{ modelsDir || defaultModelsDir }}</span>
+                  <span class="models-dir-default" v-if="modelsDir">（自定义）</span>
+                  <span class="models-dir-default" v-else>（默认）</span>
+                </div>
+                <div class="models-dir-actions">
+                  <button class="models-dir-btn" @click="handleChangeModelsDir">更改</button>
+                  <button class="models-dir-btn models-dir-reset" v-if="modelsDir" @click="setModelsDir(null)">重置</button>
+                </div>
               </div>
             </div>
           </div>
@@ -267,6 +345,15 @@
 
     <BaseDialog v-model="showDeployConfig" title="部署配置">
       <div class="form-group">
+        <label>推理后端</label>
+        <select class="device-select" v-model="deployConfigForm.backend">
+          <option value="llama-cpp">llama.cpp (GGUF)</option>
+          <option value="openvino">OpenVINO (IR)</option>
+          <option value="transformers">Transformers (Safetensors)</option>
+        </select>
+        <span class="form-hint">GGUF 模型请选 llama.cpp，OpenVINO IR 模型请选 OpenVINO</span>
+      </div>
+      <div class="form-group">
         <label>端口</label>
         <input type="number" v-model.number="deployConfigForm.port" placeholder="8000" min="1024" max="65535" />
         <span class="form-hint">默认端口 8000</span>
@@ -293,6 +380,27 @@
       </template>
     </BaseDialog>
 
+    <BaseDialog v-model="showDepInfoDialog" :title="depInfoData?.title || ''">
+      <div class="dep-info-content">
+        <p class="dep-info-desc">{{ depInfoData?.desc }}</p>
+        <div class="dep-info-section" v-if="depInfoData?.pros">
+          <span class="dep-info-label">✅ 优点</span>
+          <ul><li v-for="(p, i) in depInfoData.pros" :key="i">{{ p }}</li></ul>
+        </div>
+        <div class="dep-info-section" v-if="depInfoData?.cons">
+          <span class="dep-info-label">⚠️ 注意</span>
+          <ul><li v-for="(c, i) in depInfoData.cons" :key="i">{{ c }}</li></ul>
+        </div>
+        <div class="dep-info-section" v-if="depInfoData?.useCases">
+          <span class="dep-info-label">🎯 适用场景</span>
+          <ul><li v-for="(u, i) in depInfoData.useCases" :key="i">{{ u }}</li></ul>
+        </div>
+      </div>
+      <template #actions>
+        <button class="save-btn" @click="showDepInfoDialog = false">知道了</button>
+      </template>
+    </BaseDialog>
+
     <BaseDialog v-model="showDeleteConfirm" title="确认删除">
       <div class="delete-warning">
         <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="#E74C3C" stroke-width="1.5">
@@ -315,8 +423,9 @@
 import { ref, reactive, computed } from 'vue'
 import BaseDialog from './BaseDialog.vue'
 import { useModelManager } from '../composables/useModelManager'
-import type { LocalModel } from '../stores/localModels'
-import { getDefaultDeployConfig, updateLocalModel } from '../stores/localModels'
+import type { LocalModel, InferenceBackend } from '../stores/localModels'
+import { getDefaultDeployConfig, updateLocalModel, getBackendForFormat } from '../stores/localModels'
+import { open } from '@tauri-apps/plugin-dialog'
 
 defineEmits<{
   back: []
@@ -338,6 +447,9 @@ const {
   deleteModel,
   addAsProvider,
   installDependency,
+  modelsDir,
+  defaultModelsDir,
+  setModelsDir,
 } = useModelManager()
 
 const modelIdInput = ref('')
@@ -349,6 +461,105 @@ const isValidModelId = computed(() => {
 
 const showDeployConfig = ref(false)
 const showDeleteConfirm = ref(false)
+const showDepInfoDialog = ref(false)
+const depInfoData = ref<{ title: string; desc: string; pros?: string[]; cons?: string[]; useCases?: string[] } | null>(null)
+
+interface DepInfoItem {
+  title: string
+  desc: string
+  pros?: string[]
+  cons?: string[]
+  useCases?: string[]
+}
+
+const depInfoMap: Record<string, DepInfoItem> = {
+  python: {
+    title: 'Python',
+    desc: 'Python 运行环境，所有推理后端和模型下载工具的基础依赖。',
+    useCases: ['运行模型下载、转换、推理服务器等 Python 脚本', '必须安装 Python 3.9+，推荐 3.11 或 3.12'],
+  },
+  gpu: {
+    title: 'GPU（图形处理器）',
+    desc: '检测系统中的 GPU 设备。GPU 可以显著加速模型推理速度，通常比纯 CPU 快 5-20 倍。',
+    pros: ['Intel Arc 系列 GPU 支持 SYCL 加速', 'NVIDIA GPU 支持 CUDA 加速', 'AMD GPU 支持 ROCm 加速'],
+    cons: ['需要安装对应厂商的运行时库才能使用 GPU 加速'],
+    useCases: ['Intel Arc + oneAPI → llama.cpp SYCL 后端', 'NVIDIA + CUDA → llama.cpp CUDA 后端', '无 GPU → 使用 CPU 推理，速度较慢'],
+  },
+  llamacpp: {
+    title: 'llama.cpp',
+    desc: '高性能 LLM 推理引擎，通过 GGUF 格式直接加载模型，无需预先转换。支持 CPU 和 GPU 加速。',
+    pros: ['兼容性最好，几乎所有模型架构都支持', '无需预转换模型，直接加载 GGUF 文件', '支持 Intel GPU（SYCL）、NVIDIA GPU（CUDA）、CPU', '内存占用低，支持量化模型'],
+    cons: ['纯 Python 绑定，GPU 加速需要对应版本的预编译包', '部分高级特性（如自定义采样器）不如专用推理引擎丰富'],
+    useCases: ['✅ 推荐所有用户安装', '快速部署 GGUF 格式的本地模型', 'Intel Arc GPU 用户配合 oneAPI 可获得 GPU 加速'],
+  },
+  oneapi: {
+    title: 'Intel oneAPI Base Toolkit',
+    desc: 'Intel 提供的异构计算工具包，为 llama.cpp 提供 SYCL GPU 加速能力。仅在检测到 Intel GPU 时需要。',
+    pros: ['免费使用', '让 Intel Arc GPU 可以加速 llama.cpp 推理', '提供 DPC++/C++ Compiler、oneMKL、TBB 等核心组件'],
+    cons: ['安装体积较大（约 460MB）', '需要手动下载安装器并选择组件', '仅 Intel GPU 用户需要'],
+    useCases: ['Intel Arc 系列 GPU 用户必装', '安装时只需勾选 DPC++/C++ Compiler、Math Kernel Library、Threading Building Blocks'],
+  },
+  openvino: {
+    title: 'OpenVINO',
+    desc: 'Intel 开源的 AI 推理优化工具包，支持将模型转换为 IR 格式后高效推理。',
+    pros: ['Intel 官方优化，在 Intel 硬件上性能优异', '支持模型量化和压缩', '提供 OpenVINO GenAI 简化推理 API'],
+    cons: ['需要将模型预转换为 IR 格式（.xml + .bin）', '部分新模型架构可能暂不支持转换', '仅支持 Intel 硬件优化'],
+    useCases: ['Intel GPU/CPU 用户可选安装', '需要运行 OpenVINO IR 格式模型时安装'],
+  },
+  'openvino-genai': {
+    title: 'OpenVINO GenAI',
+    desc: '基于 OpenVINO 的生成式 AI 推理库，提供简化的 LLM 推理 API。',
+    pros: ['API 简洁，一键加载和生成', '支持连续批处理等高级特性'],
+    cons: ['依赖 OpenVINO 运行时', '模型仍需预转换为 IR 格式'],
+    useCases: ['使用 OpenVINO 后端时的必需依赖'],
+  },
+  optimum: {
+    title: 'Optimum (Intel)',
+    desc: 'Hugging Face Optimum 的 Intel 后端扩展，提供将 HuggingFace 模型转换为 OpenVINO IR 格式的能力。',
+    pros: ['无缝对接 HuggingFace 模型生态', '一行命令完成模型转换'],
+    cons: ['依赖 OpenVINO 和 transformers', '部分新模型架构可能暂不支持'],
+    useCases: ['需要将 safetensors 格式模型转换为 OpenVINO IR 格式时安装', '使用 OpenVINO 后端时的推荐依赖'],
+  },
+  modelscope: {
+    title: 'ModelScope',
+    desc: '阿里达摩院开源的模型社区平台，提供海量预训练模型的下载服务。支持从 ModelScope Hub 下载模型到本地。',
+    pros: ['国内访问速度快，无需科学上网', '模型种类丰富，包含 LLM、多模态等', '支持断点续传和并行下载'],
+    cons: ['部分模型可能不是最新版本', '与国际 HuggingFace 社区不完全同步'],
+    useCases: ['✅ 推荐所有用户安装', '从 ModelScope Hub 搜索和下载模型'],
+  },
+  transformers: {
+    title: 'Transformers',
+    desc: 'Hugging Face 的核心库，支持直接加载 Safetensors 格式模型。兼容性最广，几乎所有模型架构都能直接运行，包括多模态模型。',
+    pros: ['兼容性最广，支持几乎所有模型架构', '支持多模态模型（图片理解等）', '无需预转换模型格式', '使用模型自带的 chat template'],
+    cons: ['需要 PyTorch 作为依赖（安装体积较大）', '推理速度通常比 llama.cpp 慢', '内存占用较高'],
+    useCases: ['需要运行没有 GGUF 版本的模型时使用', '运行多模态模型（如 Gemma 3 视觉版）', '运行最新架构的模型'],
+  },
+}
+
+function showDepInfo(key: string) {
+  depInfoData.value = depInfoMap[key] || null
+  showDepInfoDialog.value = true
+}
+
+const envRecommendation = computed(() => {
+  if (!environmentStatus.value) return ''
+  const hasIntelGpu = environmentStatus.value.gpus.some((g: any) => g.vendor === 'Intel')
+  if (hasIntelGpu) return '💡 检测到 Intel GPU，推荐安装 llama.cpp + oneAPI 以获得 GPU 加速'
+  if (environmentStatus.value.gpus.length > 0) return '💡 检测到 GPU，推荐安装 llama.cpp 以获得硬件加速'
+  return '💡 纯 CPU 环境，推荐安装 llama.cpp 作为推理后端'
+})
+
+const envRecommendLLamacpp = computed(() => true)
+
+function installBtnText(pkg: string): string {
+  if (installingPackage.value !== pkg) return '安装'
+  if (dependencyInstallMessage.value) {
+    const msg = dependencyInstallMessage.value
+    if (msg.length > 20) return msg.substring(0, 20) + '...'
+    return msg
+  }
+  return '安装中...'
+}
 const editingModel = ref<LocalModel | null>(null)
 const deletingModel = ref<LocalModel | null>(null)
 
@@ -356,7 +567,8 @@ const deployConfigForm = reactive({
   ctxSize: 2048,
   threads: 4,
   device: 'GPU',
-  port: 8000
+  port: 8000,
+  backend: 'llama-cpp' as InferenceBackend
 })
 
 function formatSize(bytes: number): string {
@@ -427,6 +639,13 @@ function handleCancelDownload() {
   }
 }
 
+async function handleChangeModelsDir() {
+  const selected = await open({ directory: true, title: '选择模型存储目录' })
+  if (selected && typeof selected === 'string') {
+    await setModelsDir(selected)
+  }
+}
+
 function openDeployConfig(model: LocalModel) {
   editingModel.value = model
   const config = model.deployConfig || getDefaultDeployConfig()
@@ -434,6 +653,7 @@ function openDeployConfig(model: LocalModel) {
   deployConfigForm.threads = config.threads
   deployConfigForm.device = config.device || 'GPU'
   deployConfigForm.port = config.port || 8000
+  deployConfigForm.backend = config.backend || getBackendForFormat(model.modelFormat)
   showDeployConfig.value = true
 }
 
@@ -443,7 +663,8 @@ function handleConfirmDeploy() {
     port: deployConfigForm.port,
     ctxSize: deployConfigForm.ctxSize,
     threads: deployConfigForm.threads,
-    device: deployConfigForm.device
+    device: deployConfigForm.device,
+    backend: deployConfigForm.backend
   }
   updateLocalModel(editingModel.value.id, { deployConfig })
   const model = { ...editingModel.value, deployConfig }
@@ -532,10 +753,12 @@ function handleAddAsProvider(model: LocalModel) {
 
 .settings-content {
   flex: 1;
+  min-height: 0;
   padding: 20px 28px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  overflow-y: auto;
 }
 
 .card-section {
@@ -667,6 +890,10 @@ function handleAddAsProvider(model: LocalModel) {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .env-install-btn:hover:not(:disabled) {
@@ -687,6 +914,161 @@ function handleAddAsProvider(model: LocalModel) {
   border: 1px solid var(--color-border);
   font-size: 12px;
   color: var(--color-text-secondary);
+}
+
+.models-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.models-dir-label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.models-dir-path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.models-dir-value {
+  font-size: 13px;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.models-dir-default {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.models-dir-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.models-dir-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-card);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.models-dir-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.models-dir-reset {
+  color: var(--color-text-muted);
+}
+
+.models-dir-reset:hover {
+  border-color: var(--color-error, #e53e3e);
+  color: var(--color-error, #e53e3e);
+}
+
+.env-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 12px 0 6px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.env-group-title:first-child {
+  margin-top: 0;
+}
+
+.env-group-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-primary);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.env-recommend-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  background: var(--color-primary);
+  color: white;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.env-info-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.env-info-btn:hover {
+  opacity: 1;
+  color: var(--color-primary);
+}
+
+.dep-info-content {
+  padding: 4px 0;
+}
+
+.dep-info-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.dep-info-section {
+  margin-bottom: 12px;
+}
+
+.dep-info-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.dep-info-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.dep-info-section li {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.8;
 }
 
 .env-loading {

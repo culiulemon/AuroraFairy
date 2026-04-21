@@ -358,10 +358,11 @@ const handleSetDefault = (id: string) => {
 
 async function testConnection(provider: ApiProvider) {
   connectionStatus.value[provider.id] = 'testing'
+  const isLocal = provider.baseUrl.includes('127.0.0.1') || provider.baseUrl.includes('localhost')
 
   try {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15000)
+    const timeout = setTimeout(() => controller.abort(), isLocal ? 120000 : 15000)
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
     }
@@ -417,7 +418,7 @@ async function testConnection(provider: ApiProvider) {
   } catch (error: unknown) {
     connectionStatus.value[provider.id] = 'error'
     if (error instanceof Error && error.name === 'AbortError') {
-      console.error(`[Connection Test] ${provider.displayName || provider.id}: 连接超时 (15s)`)
+      console.error(`[Connection Test] ${provider.displayName || provider.id}: 连接超时${isLocal ? ' (120s，模型可能仍在加载中)' : ' (15s)'}`)
     } else {
       console.error(`[Connection Test] ${provider.displayName || provider.id}:`, error)
     }

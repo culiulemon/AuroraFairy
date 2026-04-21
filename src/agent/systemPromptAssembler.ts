@@ -188,12 +188,27 @@ async function readCorefile(fileName: string, fallback: string): Promise<string>
   }
 }
 
+async function readOptionalCorefile(fileName: string): Promise<{ content: string; path: string } | null> {
+  try {
+    const { loadMiscSettings, getEffectiveWorkingDir } = await import('../stores/miscSettings.js')
+    const { invoke } = await import('@tauri-apps/api/core')
+    const miscSettings = await loadMiscSettings()
+    const baseDir = getEffectiveWorkingDir(miscSettings)
+    const filePath = `${baseDir}/memories/corefile/${fileName}`
+    const content = await invoke<string>('fbm_read_file', { path: filePath })
+    return { content, path: filePath }
+  } catch {
+    return null
+  }
+}
+
 export async function assembleSystemPrompt(skillsPrompt?: string): Promise<string> {
   const settings = loadSettings()
-  const [soulRaw, habitRaw, syspromptRaw] = await Promise.all([
+  const [soulRaw, habitRaw, syspromptRaw, rebirthResult] = await Promise.all([
     readCorefile('SOUL.md', soulFallback),
     readCorefile('HABIT.md', habitFallback),
     readCorefile('SYSPROMPT.md', syspromptFallback),
+    readOptionalCorefile('REBIRTH.md'),
   ])
 
   const cleanSoul = stripFrontmatter(soulRaw)
@@ -236,6 +251,24 @@ export async function assembleSystemPrompt(skillsPrompt?: string): Promise<strin
   }
   if (roleConfigPrompt) {
     result += `\n\n---\n\n${roleConfigPrompt}`
+  }
+  if (rebirthResult) {
+    const cleanRebirth = stripFrontmatter(rebirthResult.content)
+    const processedRebirth = processTemplate(cleanRebirth, {
+      FairyName: settings.fairyName || 'Fairy',
+      User: settings.userName || '主人',
+    })
+    if (processedRebirth.trim()) {
+      const rebirthPrompt = [
+        '## ⚡ 初始化引导',
+        '',
+        `> 此文件路径: \`${rebirthResult.path}\``,
+        `> 完成初始化后，使用 file_delete 工具删除此文件: \`${rebirthResult.path}\``,
+        '',
+        processedRebirth,
+      ].join('\n')
+      result = `${rebirthPrompt}\n\n---\n\n${result}`
+    }
   }
   return result
 }

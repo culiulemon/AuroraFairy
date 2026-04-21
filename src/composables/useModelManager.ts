@@ -5,6 +5,11 @@ import type { LocalModel, ModelType, ModelStatus } from '../stores/localModels'
 import { loadLocalModels, addLocalModel, updateLocalModel, removeLocalModel, getDefaultDeployConfig } from '../stores/localModels'
 import { loadSettings, saveSettings } from '../stores/settings'
 
+interface GpuInfo {
+  vendor: string
+  name: string
+}
+
 interface EnvironmentStatus {
   python: boolean
   python_version: string | null
@@ -13,7 +18,10 @@ interface EnvironmentStatus {
   openvino_version: string | null
   openvino_genai: boolean
   optimum: boolean
-  intel_gpu: boolean
+  gpus: GpuInfo[]
+  llama_cpp: boolean
+  oneapi: boolean
+  transformers: boolean
 }
 
 interface DependencyInstallProgress {
@@ -49,6 +57,28 @@ export function useModelManager() {
   let unlistenServer: UnlistenFn | null = null
   let unlistenDependency: UnlistenFn | null = null
 
+  const modelsDir = ref<string | null>(null)
+  const defaultModelsDir = ref<string>('')
+
+  async function loadModelsDirConfig() {
+    try {
+      const result = await invoke<{ models_dir: string | null; default_models_dir: string }>('get_models_dir_config')
+      modelsDir.value = result.models_dir
+      defaultModelsDir.value = result.default_models_dir
+    } catch (e) {
+      console.error('Failed to load models dir config:', e)
+    }
+  }
+
+  async function setModelsDir(dir: string | null) {
+    try {
+      await invoke('set_models_dir_config', { modelsDir: dir })
+      modelsDir.value = dir
+    } catch (e) {
+      console.error('Failed to set models dir:', e)
+    }
+  }
+
   const installingPackage = ref<string | null>(null)
   const dependencyInstallMessage = ref<string | null>(null)
 
@@ -57,7 +87,10 @@ export function useModelManager() {
   function loadCachedEnvironment(): EnvironmentStatus | null {
     try {
       const stored = localStorage.getItem(ENV_STORAGE_KEY)
-      if (stored) return JSON.parse(stored)
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (parsed && Array.isArray(parsed.gpus) && 'transformers' in parsed) return parsed
+      }
     } catch { /* ignore */ }
     return null
   }
@@ -69,6 +102,7 @@ export function useModelManager() {
   }
 
   async function checkEnvironment() {
+    environmentStatus.value = null
     try {
       environmentStatus.value = await invoke<EnvironmentStatus>('check_environment')
       if (environmentStatus.value) {
@@ -112,14 +146,34 @@ export function useModelManager() {
     deployError.value = null
     try {
       const config = model.deployConfig || getDefaultDeployConfig()
+      if (!config.backend || config.backend === getDefaultDeployConfig().backend) {
+        if (!model.modelFormat || model.modelFormat === 'unknown') {
+          config.backend = 'llama-cpp'
+        } else if (model.modelFormat === 'gguf') {
+          config.backend = 'llama-cpp'
+        } else if (model.modelFormat === 'openvino-ir') {
+          config.backend = 'openvino'
+        } else if (model.modelFormat === 'safetensors') {
+          config.backend = 'transformers'
+        }
+      }
       const modelName = model.localPath.split('/').pop() || model.displayName
+      let ggufFile = ''
+      if (config.backend === 'llama-cpp') {
+        const info = await invoke<{ gguf_files: string[]; model_format: string }>('get_model_info', {
+          localDir: model.localPath
+        })
+        if (info.gguf_files && info.gguf_files.length > 0) {
+          ggufFile = info.gguf_files[0]
+        }
+      }
       const port = await invoke<number>('deploy_model', {
         modelPath: model.localPath,
         modelName,
-        ggufFile: '',
+        ggufFile,
         config
       })
-      updateLocalModel(model.id, { status: 'running', port })
+      updateLocalModel(model.id, { status: 'running', port, deployConfig: config })
       refreshModels()
     } catch (e: any) {
       const msg = String(e)
@@ -186,15 +240,22 @@ export function useModelManager() {
     dependencyInstallMessage.value = null
     try {
       await invoke('install_dependency', { package: packageName })
-    } catch (e) {
-      console.error('Failed to install dependency:', e)
+    } catch (e: any) {
+      const msg = String(e)
+      console.error('Failed to install dependency:', msg)
       installingPackage.value = null
+      dependencyInstallMessage.value = msg
     }
   }
 
   onMounted(async () => {
     models.value = loadLocalModels()
-    environmentStatus.value = loadCachedEnvironment()
+    const cached = loadCachedEnvironment()
+    environmentStatus.value = cached
+    if (!cached) {
+      checkEnvironment()
+    }
+    loadModelsDirConfig()
 
     unlistenDownload = await listen<DownloadProgress>('model-download-progress', (event) => {
       downloadProgress.value = event.payload
@@ -260,7 +321,6 @@ export function useModelManager() {
       dependencyInstallMessage.value = event.payload.message
       if (event.payload.status === 'completed' || event.payload.status === 'error') {
         installingPackage.value = null
-        checkEnvironment()
       }
     })
   })
@@ -289,5 +349,8 @@ export function useModelManager() {
     addAsProvider,
     refreshModels,
     installDependency,
+    modelsDir,
+    defaultModelsDir,
+    setModelsDir,
   }
 }

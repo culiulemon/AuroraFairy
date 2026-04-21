@@ -1,5 +1,7 @@
 export type ModelType = 'llm' | 'embedding' | 'tts' | 'other'
 export type ModelStatus = 'downloading' | 'converting' | 'ready' | 'running' | 'error' | 'stopping'
+export type InferenceBackend = 'openvino' | 'llama-cpp' | 'tensorrt-llm' | 'transformers'
+export type ModelFormat = 'gguf' | 'openvino-ir' | 'safetensors' | 'unknown'
 
 export interface LocalModel {
   id: string
@@ -12,6 +14,7 @@ export interface LocalModel {
   port?: number
   deployedAt?: string
   addedAt: string
+  modelFormat?: ModelFormat
   convertedToIR?: boolean
   irPath?: string
   deployConfig?: DeployConfig
@@ -22,6 +25,7 @@ export interface DeployConfig {
   threads: number
   device: string
   port: number
+  backend: InferenceBackend
 }
 
 const STORAGE_KEY = 'aurorafairy-local-models'
@@ -30,11 +34,21 @@ const defaultDeployConfig: DeployConfig = {
   ctxSize: 2048,
   threads: 4,
   device: 'GPU',
-  port: 0
+  port: 0,
+  backend: 'llama-cpp'
 }
 
 export function getDefaultDeployConfig(): DeployConfig {
   return { ...defaultDeployConfig }
+}
+
+export function getBackendForFormat(format?: ModelFormat): InferenceBackend {
+  switch (format) {
+    case 'gguf': return 'llama-cpp'
+    case 'openvino-ir': return 'openvino'
+    case 'safetensors': return 'transformers'
+    default: return 'llama-cpp'
+  }
 }
 
 export function loadLocalModels(): LocalModel[] {

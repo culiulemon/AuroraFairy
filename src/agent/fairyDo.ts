@@ -90,7 +90,9 @@ function isCorefileWrite(executor: ExecutorName, input: Record<string, unknown>)
   if (executor !== 'file_write' && executor !== 'file_edit' && executor !== 'file_delete') return false
   const path = input.path as string
   if (!path) return false
-  return COREFILE_PATTERN.test(path)
+  if (!COREFILE_PATTERN.test(path)) return false
+  if (executor === 'file_delete' && /REBIRTH\.md$/i.test(path)) return false
+  return true
 }
 
 export function isOutOfWorkdirError(errorMsg: string): boolean {

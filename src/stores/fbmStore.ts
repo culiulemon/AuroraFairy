@@ -410,8 +410,12 @@ export const fbmStore = {
 
       for (const [fileName, content] of Object.entries(COREFILE_TEMPLATES)) {
         const filePath = `${corefileDir}/${fileName}`
-        const exists = await invoke<boolean>('fbm_exists', { path: filePath }).catch(() => false)
-        if (force || (!exists && !skipAutoRecover.includes(fileName))) {
+        if (force) {
+          const processed = processCorefileTemplate(content, variables)
+          await invoke('fbm_write_file', { path: filePath, content: processed })
+        } else {
+          const exists = await invoke<boolean>('fbm_exists', { path: filePath }).catch(() => false)
+          if (exists || skipAutoRecover.includes(fileName)) continue
           const processed = processCorefileTemplate(content, variables)
           await invoke('fbm_write_file', { path: filePath, content: processed })
         }

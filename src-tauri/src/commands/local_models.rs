@@ -26,27 +26,46 @@ fn get_download_processes() -> Arc<Mutex<HashMap<String, Child>>> {
         .clone()
 }
 
-static OPENVINO_SERVER: std::sync::OnceLock<Arc<Mutex<Option<OpenVinoServer>>>> =
+static MODEL_SERVER: std::sync::OnceLock<Arc<Mutex<Option<ModelServer>>>> =
     std::sync::OnceLock::new();
 
-fn get_openvino_server() -> Arc<Mutex<Option<OpenVinoServer>>> {
-    OPENVINO_SERVER
+fn get_model_server() -> Arc<Mutex<Option<ModelServer>>> {
+    MODEL_SERVER
         .get_or_init(|| Arc::new(Mutex::new(None)))
         .clone()
 }
 
-struct OpenVinoServer {
-    child: Child,
-    port: u16,
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Backend {
+    OpenVINO,
+    LlamaCpp,
+    TensorRTLLM,
+    Transformers,
 }
 
-impl Drop for OpenVinoServer {
+struct ModelServer {
+    child: Child,
+    port: u16,
+    #[allow(dead_code)]
+    backend: Backend,
+}
+
+impl Drop for ModelServer {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
     }
 }
 
 fn get_models_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    if let Some(ref dir) = crate::get_configured_models_dir(app) {
+        let models_dir = std::path::PathBuf::from(dir);
+        if !models_dir.exists() {
+            fs::create_dir_all(&models_dir)
+                .map_err(|e| format!("无法创建模型目录: {}", e))?;
+        }
+        return Ok(models_dir);
+    }
     let data_dir = crate::get_data_dir(app)?;
     let models_dir = data_dir.join("models");
     if !models_dir.exists() {
@@ -85,7 +104,10 @@ pub struct EnvironmentStatus {
     pub openvino_version: Option<String>,
     pub openvino_genai: bool,
     pub optimum: bool,
-    pub intel_gpu: bool,
+    pub gpus: Vec<GpuInfo>,
+    pub llama_cpp: bool,
+    pub oneapi: bool,
+    pub transformers: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -122,6 +144,12 @@ pub struct DeployConfig {
     pub threads: u32,
     pub device: String,
     pub port: u16,
+    #[serde(default = "default_backend")]
+    pub backend: Backend,
+}
+
+fn default_backend() -> Backend {
+    Backend::LlamaCpp
 }
 
 #[allow(dead_code)]
@@ -170,8 +198,12 @@ async fn openvino_api_post_json(
         .map_err(|e| format!("解析响应失败: {}", e))
 }
 
-async fn start_openvino_server(_app: &tauri::AppHandle, port: u16) -> Result<(), String> {
-    let server_state = get_openvino_server();
+async fn start_model_server(
+    _app: &tauri::AppHandle,
+    backend: &Backend,
+    port: u16,
+) -> Result<(), String> {
+    let server_state = get_model_server();
     {
         let guard = server_state.lock().await;
         if let Some(ref server) = *guard {
@@ -189,28 +221,64 @@ async fn start_openvino_server(_app: &tauri::AppHandle, port: u16) -> Result<(),
         }
     }
 
-    let project_root = crate::get_project_root()?;
-    let script_path = project_root.join("scripts").join("openvino_server.py");
+    let mut cmd = match backend {
+        Backend::OpenVINO => {
+            let project_root = crate::get_project_root()?;
+            let script_path = project_root.join("scripts").join("openvino_server.py");
+            if !script_path.exists() {
+                return Err(format!("OpenVINO 服务器脚本不存在: {:?}", script_path));
+            }
+            let port_str = port.to_string();
+            let script_str = script_path.to_string_lossy().to_string();
+            let mut c = Command::new("python");
+            c.args([&script_str, "--port", &port_str]);
+            c
+        }
+        Backend::LlamaCpp => {
+            let port_str = port.to_string();
+            let mut c = Command::new("python");
+            c.args([
+                "-m",
+                "llama_cpp.server",
+                "--port",
+                &port_str,
+                "--host",
+                "127.0.0.1",
+            ]);
+            c
+        }
+        Backend::TensorRTLLM => {
+            return Err("TensorRT-LLM 后端尚未实现".to_string());
+        }
+        Backend::Transformers => {
+            let project_root = crate::get_project_root()?;
+            let script_path = project_root.join("scripts").join("transformers_server.py");
+            if !script_path.exists() {
+                return Err(format!("Transformers 服务器脚本不存在: {:?}", script_path));
+            }
+            let port_str = port.to_string();
+            let script_str = script_path.to_string_lossy().to_string();
+            let mut c = Command::new("python");
+            c.args([&script_str, "--port", &port_str]);
+            c
+        }
+    };
 
-    if !script_path.exists() {
-        return Err(format!("OpenVINO 服务器脚本不存在: {:?}", script_path));
-    }
-
-    let port_str = port.to_string();
-    let script_str = script_path.to_string_lossy().to_string();
-    let mut cmd = Command::new("python");
-    cmd.args([&script_str, "--port", &port_str])
-        .stdout(std::process::Stdio::null())
+    cmd.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
     let child = cmd
         .spawn()
-        .map_err(|e| format!("启动 OpenVINO 服务器失败: {}", e))?;
+        .map_err(|e| format!("启动服务器失败: {}", e))?;
 
     {
         let mut guard = server_state.lock().await;
-        *guard = Some(OpenVinoServer { child, port });
+        *guard = Some(ModelServer {
+            child,
+            port,
+            backend: backend.clone(),
+        });
     }
 
     let health_url = format!("http://127.0.0.1:{}/health", port);
@@ -229,7 +297,7 @@ async fn start_openvino_server(_app: &tauri::AppHandle, port: u16) -> Result<(),
             }
             _ => {
                 if retries > 30 {
-                    return Err("OpenVINO 服务器启动超时 (15秒)".to_string());
+                    return Err("服务器启动超时 (15秒)".to_string());
                 }
             }
         }
@@ -239,8 +307,8 @@ async fn start_openvino_server(_app: &tauri::AppHandle, port: u16) -> Result<(),
 }
 
 #[allow(dead_code)]
-async fn stop_openvino_server() -> Result<(), String> {
-    let server_state = get_openvino_server();
+async fn stop_model_server() -> Result<(), String> {
+    let server_state = get_model_server();
     let mut guard = server_state.lock().await;
     *guard = None;
     Ok(())
@@ -336,7 +404,37 @@ pub async fn check_environment() -> Result<EnvironmentStatus, String> {
         _ => false,
     };
 
-    let intel_gpu = check_intel_gpu().await;
+    let gpus = detect_gpus().await;
+
+    let llama_cpp_check = timeout(Duration::from_secs(10), async {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "python", "-c", "import importlib.util; print(importlib.util.find_spec('llama_cpp') is not None)"]);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.output().await
+    })
+    .await;
+
+    let llama_cpp = match llama_cpp_check {
+        Ok(Ok(output)) => output.status.success(),
+        _ => false,
+    };
+
+    let oneapi = std::path::Path::new(r"C:\Program Files (x86)\Intel\oneAPI\setvars.bat").exists();
+
+    let transformers_check = timeout(Duration::from_secs(10), async {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "python", "-c", "import importlib.util; print(importlib.util.find_spec('transformers') is not None)"]);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.output().await
+    })
+    .await;
+
+    let transformers = match transformers_check {
+        Ok(Ok(output)) => output.status.success(),
+        _ => false,
+    };
 
     Ok(EnvironmentStatus {
         python,
@@ -346,35 +444,83 @@ pub async fn check_environment() -> Result<EnvironmentStatus, String> {
         openvino_version,
         openvino_genai,
         optimum,
-        intel_gpu,
+        gpus,
+        llama_cpp,
+        oneapi,
+        transformers,
     })
 }
 
-async fn check_intel_gpu() -> bool {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GpuInfo {
+    pub vendor: String,
+    pub name: String,
+}
+
+async fn detect_gpus() -> Vec<GpuInfo> {
     #[cfg(target_os = "windows")]
     {
         let gpu_check = timeout(Duration::from_secs(10), async {
             let mut cmd = Command::new("cmd");
-            cmd.args(["/C", "python", "-c",
-                "import openvino as ov; core = ov.Core(); devices = core.available_devices; print('GPU' in devices)"
+            cmd.args([
+                "/C",
+                "wmic",
+                "path",
+                "win32_videocontroller",
+                "get",
+                "caption",
+                "/format:value",
             ]);
             cmd.creation_flags(CREATE_NO_WINDOW);
             cmd.output().await
         })
         .await;
 
-        match gpu_check {
-            Ok(Ok(output)) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                stdout == "True"
+        let mut gpus = Vec::new();
+        if let Ok(Ok(output)) = gpu_check {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let line = line.trim();
+                if let Some(name) = line.strip_prefix("Caption=") {
+                    let name = name.trim();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let name_lower = name.to_lowercase();
+                    if name_lower.contains("virtual")
+                        || name_lower.contains("remote")
+                        || name_lower.contains("software")
+                        || name_lower.contains("basic render")
+                    {
+                        continue;
+                    }
+                    let vendor = if name_lower.contains("intel") {
+                        "Intel".to_string()
+                    } else if name_lower.contains("nvidia") || name_lower.contains("geforce") {
+                        "NVIDIA".to_string()
+                    } else if name_lower.contains("amd") || name_lower.contains("radeon") {
+                        "AMD".to_string()
+                    } else {
+                        "Unknown".to_string()
+                    };
+                    gpus.push(GpuInfo {
+                        vendor,
+                        name: name.to_string(),
+                    });
+                }
             }
-            _ => false,
         }
+        gpus
     }
     #[cfg(not(target_os = "windows"))]
     {
-        false
+        Vec::new()
     }
+}
+
+async fn check_intel_gpu() -> bool {
+    let gpus = detect_gpus().await;
+    gpus.iter().any(|g| g.vendor == "Intel")
 }
 
 #[tauri::command]
@@ -389,7 +535,149 @@ pub async fn install_dependency(
     let _ = app.emit("dependency-install-progress", progress);
 
     let mut cmd = Command::new("cmd");
-    cmd.args(["/C", "pip", "install", &package]);
+
+    if package == "oneapi" {
+        let progress = InstallProgress {
+            status: "installing".to_string(),
+            message: "正在打开 Intel oneAPI 下载页面...".to_string(),
+        };
+        let _ = app.emit("dependency-install-progress", progress);
+
+        #[cfg(target_os = "windows")]
+        {
+            let mut open_cmd = Command::new("cmd");
+            open_cmd.args([
+                "/C",
+                "start",
+                "https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html",
+            ]);
+            #[cfg(target_os = "windows")]
+            open_cmd.creation_flags(CREATE_NO_WINDOW);
+            let _ = open_cmd.spawn();
+        }
+
+        let progress2 = InstallProgress {
+            status: "completed".to_string(),
+            message: "已在浏览器中打开 oneAPI 下载页面。安装时只需勾选以下组件即可：\n1. Intel oneAPI DPC++/C++ Compiler\n2. Intel oneAPI Math Kernel Library\n3. Intel oneAPI Threading Building Blocks\n安装完成后请重新检测环境。".to_string(),
+        };
+        let _ = app.emit("dependency-install-progress", progress2);
+        return Ok(());
+    } else if package == "llama-cpp-python" {
+        let has_intel_gpu = check_intel_gpu().await;
+        let has_oneapi = std::path::Path::new(r"C:\Program Files (x86)\Intel\oneAPI\setvars.bat").exists();
+        if has_intel_gpu && has_oneapi {
+            let progress = InstallProgress {
+                status: "installing".to_string(),
+                message: "正在下载 llama-cpp-python (Intel GPU/SYCL 预编译包)...".to_string(),
+            };
+            let _ = app.emit("dependency-install-progress", progress);
+            let py_ver_output = Command::new("cmd")
+                .args(["/C", "python", "-c", "import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')"])
+                .output()
+                .await;
+            let py_tag = match py_ver_output {
+                Ok(o) if o.status.success() => {
+                    String::from_utf8_lossy(&o.stdout).trim().to_string()
+                }
+                _ => "313".to_string(),
+            };
+            let wheel_dir = std::env::temp_dir().join("aurorafairy_llamacpp");
+            let _ = fs::create_dir_all(&wheel_dir);
+            let download_filename = format!(
+                "llama_cpp_python-0.3.36+sycl-cp{}-cp{}-win_amd64.whl",
+                py_tag, py_tag
+            );
+            let download_file = wheel_dir.join(&download_filename);
+            let install_filename = format!(
+                "llama_cpp_python-0.3.36-cp{}-cp{}-win_amd64.whl",
+                py_tag, py_tag
+            );
+            let install_file = wheel_dir.join(&install_filename);
+            if !download_file.exists() && !install_file.exists() {
+                let mut curl_cmd = Command::new("cmd");
+                curl_cmd.args([
+                    "/C",
+                    "curl.exe",
+                    "-L",
+                    "-o",
+                    &download_file.to_string_lossy(),
+                    &format!(
+                        "https://github.com/allanmeng/llama-cpp-python-sycl-windows/releases/latest/download/{}",
+                        download_filename
+                    ),
+                ]);
+                #[cfg(target_os = "windows")]
+                curl_cmd.creation_flags(CREATE_NO_WINDOW);
+                let curl_result = curl_cmd.output().await;
+                match curl_result {
+                    Ok(o) if o.status.success() => {}
+                    Ok(o) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+                        return Err(format!("下载 llama-cpp-python SYCL 失败: {}", stderr));
+                    }
+                    Err(e) => {
+                        return Err(format!("下载 llama-cpp-python SYCL 失败: {}", e));
+                    }
+                }
+                let _ = fs::copy(&download_file, &install_file);
+            }
+            let progress2 = InstallProgress {
+                status: "installing".to_string(),
+                message: "正在安装 llama-cpp-python (SYCL)...".to_string(),
+            };
+            let _ = app.emit("dependency-install-progress", progress2);
+            let _ = Command::new("cmd")
+                .args(["/C", "pip", "uninstall", "llama-cpp-python", "-y"])
+                .output()
+                .await;
+            cmd.args([
+                "/C",
+                "pip",
+                "install",
+                &install_file.to_string_lossy(),
+            ]);
+        } else if has_intel_gpu && !has_oneapi {
+            return Err("检测到 Intel GPU 但未安装 Intel oneAPI。请先安装 oneAPI（点击上方 oneAPI 的下载按钮），然后再安装 llama.cpp。".to_string());
+        } else {
+            cmd.args(["/C", "pip", "install", &package]);
+        }
+    } else if package == "transformers" {
+        let torch_check = Command::new("cmd")
+            .args(["/C", "python", "-c", "import importlib.util; print(importlib.util.find_spec('torch') is not None)"])
+            .output()
+            .await;
+        let has_torch = match torch_check {
+            Ok(o) if o.status.success() => {
+                String::from_utf8_lossy(&o.stdout).trim() == "True"
+            }
+            _ => false,
+        };
+
+        if !has_torch {
+            let progress = InstallProgress {
+                status: "installing".to_string(),
+                message: "正在安装 PyTorch (依赖，约 800MB)...".to_string(),
+            };
+            let _ = app.emit("dependency-install-progress", progress);
+            let has_intel_gpu = check_intel_gpu().await;
+            let mut torch_cmd = Command::new("cmd");
+            if has_intel_gpu {
+                torch_cmd.args(["/C", "pip", "install", "torch", "--index-url", "https://pytorch-extension.intel.com/whl/xpu"]);
+            } else {
+                torch_cmd.args(["/C", "pip", "install", "torch"]);
+            }
+            let _ = torch_cmd.output().await;
+        }
+
+        let progress2 = InstallProgress {
+            status: "installing".to_string(),
+            message: "正在安装 Transformers...".to_string(),
+        };
+        let _ = app.emit("dependency-install-progress", progress2);
+        cmd.args(["/C", "pip", "install", "transformers"]);
+    } else {
+        cmd.args(["/C", "pip", "install", &package]);
+    }
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd.stdout(std::process::Stdio::piped())
@@ -816,19 +1104,43 @@ pub async fn convert_model_to_ir(
             }
         }
         Ok(output) => {
+            if ov_xml.exists() && ov_bin.exists() {
+                let status = ServerStatus {
+                    model_id: model_path.clone(),
+                    status: "imported".to_string(),
+                    port: 0,
+                    message: "模型转换完成".to_string(),
+                };
+                let _ = app.emit("model-server-status", status);
+                return Ok(ir_output_dir);
+            }
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let error_lines: Vec<&str> = stderr.lines().filter(|l| {
+                let l = l.trim();
+                !l.is_empty()
+                    && !l.contains("DeprecationWarning")
+                    && !l.contains("UserWarning")
+                    && !l.contains("TracerWarning")
+                    && !l.starts_with("Loading checkpoint shards")
+                    && !l.starts_with("`torch_dtype`")
+                    && !l.starts_with("`use_fast`")
+                    && !l.starts_with("Using a slow")
+                    && !l.starts_with("loss_type=None")
+                    && !l.contains("it/s]")
+            }).collect();
+            let error_msg = if error_lines.is_empty() {
+                format!("模型转换失败 (退出码: {})", output.status)
+            } else {
+                error_lines.last().unwrap_or(&"未知错误").to_string()
+            };
             let status = ServerStatus {
                 model_id: model_path.clone(),
                 status: "error".to_string(),
                 port: 0,
-                message: format!("模型转换失败"),
+                message: error_msg.clone(),
             };
             let _ = app.emit("model-server-status", status);
-            Err(format!(
-                "模型转换失败: {} {}",
-                stderr, stdout
-            ))
+            Err(error_msg)
         }
         Err(e) => {
             let status = ServerStatus {
@@ -848,70 +1160,101 @@ pub async fn deploy_model(
     app: tauri::AppHandle,
     model_path: String,
     model_name: String,
-    _gguf_file: String,
+    gguf_file: String,
     config: DeployConfig,
 ) -> Result<u16, String> {
     let models_dir = get_models_dir(&app)?;
-
-    let ir_model_name = model_path.split('/').last().unwrap_or(&model_path);
-    let ir_path = format!("{}_ov", ir_model_name);
-    let abs_ir_dir = models_dir.join(&ir_path);
-
-    if !abs_ir_dir.exists() {
-        let ov_xml = abs_ir_dir.join("openvino_model.xml");
-        if !ov_xml.exists() {
-            let convert_result = convert_model_to_ir(
-                app.clone(),
-                model_path.clone(),
-                config.device.clone(),
-            )
-            .await;
-
-            match convert_result {
-                Ok(_) => {}
-                Err(e) => {
-                    let status = ServerStatus {
-                        model_id: model_path.clone(),
-                        status: "error".to_string(),
-                        port: 0,
-                        message: format!("模型转换失败: {}", e),
-                    };
-                    let _ = app.emit("model-server-status", status);
-                    return Err(e);
-                }
-            }
-        }
-    }
-
     let port = if config.port > 0 { config.port } else { 8000 };
 
-    let status = ServerStatus {
-        model_id: model_path.clone(),
-        status: "starting".to_string(),
-        port,
-        message: "正在启动 OpenVINO 推理服务器...".to_string(),
-    };
-    let _ = app.emit("model-server-status", status);
+    match &config.backend {
+        Backend::LlamaCpp => {
+            let model_name_dir = model_path.split('/').last().unwrap_or(&model_path);
+            let abs_model_dir = models_dir.join(model_name_dir);
 
-    start_openvino_server(&app, port).await?;
+            let gguf_path = if gguf_file.is_empty() {
+                let mut found: Option<std::path::PathBuf> = None;
+                if abs_model_dir.exists() {
+                    for entry in WalkDir::new(&abs_model_dir).into_iter().filter_map(|e| e.ok()) {
+                        if let Some(name) = entry.file_name().to_str() {
+                            if name.ends_with(".gguf") {
+                                found = Some(entry.path().to_path_buf());
+                                break;
+                            }
+                        }
+                    }
+                }
+                found.ok_or_else(|| "未找到 GGUF 模型文件".to_string())?
+            } else {
+                abs_model_dir.join(&gguf_file)
+            };
 
-    let load_status = ServerStatus {
-        model_id: model_path.clone(),
-        status: "importing".to_string(),
-        port,
-        message: "正在加载模型...".to_string(),
-    };
-    let _ = app.emit("model-server-status", load_status);
+            if !gguf_path.exists() {
+                return Err(format!("GGUF 文件不存在: {:?}", gguf_path));
+            }
 
-    let ir_path_str = abs_ir_dir.to_string_lossy().to_string();
-    let load_body = serde_json::json!({
-        "model_path": ir_path_str,
-        "model_name": model_name,
-        "device": config.device,
-    });
+            let status = ServerStatus {
+                model_id: model_path.clone(),
+                status: "starting".to_string(),
+                port,
+                message: "正在启动 llama.cpp 推理服务器...".to_string(),
+            };
+            let _ = app.emit("model-server-status", status);
 
-    match openvino_api_post_json(port, "/api/load", load_body).await {
-        Ok(_) => {
+            let server_state = get_model_server();
+            {
+                let mut guard = server_state.lock().await;
+                let port_str = port.to_string();
+                let model_str = gguf_path.to_string_lossy().to_string();
+                let n_gpu_layers = if config.device == "GPU" { "-1" } else { "0" }.to_string();
+                let mut cmd = Command::new("python");
+                cmd.args([
+                    "-m",
+                    "llama_cpp.server",
+                    "--model",
+                    &model_str,
+                    "--port",
+                    &port_str,
+                    "--host",
+                    "127.0.0.1",
+                    "--n-gpu-layers",
+                    &n_gpu_layers,
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+                #[cfg(target_os = "windows")]
+                cmd.creation_flags(CREATE_NO_WINDOW);
+                let child = cmd
+                    .spawn()
+                    .map_err(|e| format!("启动 llama.cpp 服务器失败: {}", e))?;
+                *guard = Some(ModelServer {
+                    child,
+                    port,
+                    backend: Backend::LlamaCpp,
+                });
+            }
+
+            let health_url = format!("http://127.0.0.1:{}/health", port);
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+            let mut retries = 0;
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                retries += 1;
+                match client.get(&health_url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        break;
+                    }
+                    _ => {
+                        if retries > 60 {
+                            return Err("llama.cpp 服务器启动超时 (30秒)".to_string());
+                        }
+                    }
+                }
+            }
+
             let status = ServerStatus {
                 model_id: model_path.clone(),
                 status: "running".to_string(),
@@ -919,25 +1262,152 @@ pub async fn deploy_model(
                 message: "模型已加载并运行".to_string(),
             };
             let _ = app.emit("model-server-status", status);
+
+            Ok(port)
         }
-        Err(e) => {
+        Backend::OpenVINO => {
+            let ir_model_name = model_path.split('/').last().unwrap_or(&model_path);
+            let ir_path = format!("{}_ov", ir_model_name);
+            let abs_ir_dir = models_dir.join(&ir_path);
+
+            if !abs_ir_dir.exists() {
+                let ov_xml = abs_ir_dir.join("openvino_model.xml");
+                if !ov_xml.exists() {
+                    let convert_result = convert_model_to_ir(
+                        app.clone(),
+                        model_path.clone(),
+                        config.device.clone(),
+                    )
+                    .await;
+
+                    if let Err(e) = convert_result {
+                        let status = ServerStatus {
+                            model_id: model_path.clone(),
+                            status: "error".to_string(),
+                            port: 0,
+                            message: format!("模型转换失败: {}", e),
+                        };
+                        let _ = app.emit("model-server-status", status);
+                        return Err(e);
+                    }
+                }
+            }
+
             let status = ServerStatus {
                 model_id: model_path.clone(),
-                status: "error".to_string(),
-                port: 0,
-                message: format!("加载模型失败: {}", e),
+                status: "starting".to_string(),
+                port,
+                message: "正在启动 OpenVINO 推理服务器...".to_string(),
             };
             let _ = app.emit("model-server-status", status);
-            return Err(e);
+
+            start_model_server(&app, &Backend::OpenVINO, port).await?;
+
+            let load_status = ServerStatus {
+                model_id: model_path.clone(),
+                status: "importing".to_string(),
+                port,
+                message: "正在加载模型...".to_string(),
+            };
+            let _ = app.emit("model-server-status", load_status);
+
+            let ir_path_str = abs_ir_dir.to_string_lossy().to_string();
+            let load_body = serde_json::json!({
+                "model_path": ir_path_str,
+                "model_name": model_name,
+                "device": config.device,
+            });
+
+            match openvino_api_post_json(port, "/api/load", load_body).await {
+                Ok(_) => {
+                    let status = ServerStatus {
+                        model_id: model_path.clone(),
+                        status: "running".to_string(),
+                        port,
+                        message: "模型已加载并运行".to_string(),
+                    };
+                    let _ = app.emit("model-server-status", status);
+                }
+                Err(e) => {
+                    let status = ServerStatus {
+                        model_id: model_path.clone(),
+                        status: "error".to_string(),
+                        port: 0,
+                        message: format!("加载模型失败: {}", e),
+                    };
+                    let _ = app.emit("model-server-status", status);
+                    return Err(e);
+                }
+            }
+
+            Ok(port)
+        }
+        Backend::TensorRTLLM => {
+            Err("TensorRT-LLM 后端尚未实现".to_string())
+        }
+        Backend::Transformers => {
+            let model_name_dir = model_path.split('/').last().unwrap_or(&model_path);
+            let abs_model_dir = models_dir.join(model_name_dir);
+
+            if !abs_model_dir.exists() {
+                return Err(format!("模型目录不存在: {:?}", abs_model_dir));
+            }
+
+            let status = ServerStatus {
+                model_id: model_path.clone(),
+                status: "starting".to_string(),
+                port,
+                message: "正在启动 Transformers 推理服务器...".to_string(),
+            };
+            let _ = app.emit("model-server-status", status);
+
+            start_model_server(&app, &Backend::Transformers, port).await?;
+
+            let load_status = ServerStatus {
+                model_id: model_path.clone(),
+                status: "importing".to_string(),
+                port,
+                message: "正在加载模型（首次加载可能较慢）...".to_string(),
+            };
+            let _ = app.emit("model-server-status", load_status);
+
+            let model_path_str = abs_model_dir.to_string_lossy().to_string();
+            let load_body = serde_json::json!({
+                "model_path": model_path_str,
+                "model_name": model_name,
+                "device": config.device,
+            });
+
+            match openvino_api_post_json(port, "/api/load", load_body).await {
+                Ok(_) => {
+                    let status = ServerStatus {
+                        model_id: model_path.clone(),
+                        status: "running".to_string(),
+                        port,
+                        message: "模型已加载并运行".to_string(),
+                    };
+                    let _ = app.emit("model-server-status", status);
+                }
+                Err(e) => {
+                    let status = ServerStatus {
+                        model_id: model_path.clone(),
+                        status: "error".to_string(),
+                        port: 0,
+                        message: format!("加载模型失败: {}", e),
+                    };
+                    let _ = app.emit("model-server-status", status);
+                    return Err(e);
+                }
+            }
+
+            Ok(port)
         }
     }
-
-    Ok(port)
 }
 
 #[tauri::command]
 pub async fn stop_model(app: tauri::AppHandle, model_path: String) -> Result<(), String> {
-    let server_state = get_openvino_server();
+    let server_state = get_model_server();
     let port = {
         let guard = server_state.lock().await;
         guard.as_ref().map(|s| s.port).unwrap_or(0)

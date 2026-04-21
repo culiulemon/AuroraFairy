@@ -111,7 +111,6 @@ async function saveAll() {
 async function handleResetRole() {
   resetting.value = true
   try {
-    await fbmStore.initCoreFiles(true)
     for (const key of Object.keys(defaults)) {
       formData[key] = defaults[key]
       originalData[key] = defaults[key]
@@ -121,6 +120,7 @@ async function handleResetRole() {
       s[key] = defaults[key]
     }
     saveSettings(s as unknown as Partial<import('../stores/settings').ApiSettings>)
+    await fbmStore.initCoreFiles(true)
   } catch (error) {
     console.error('[Role] 重置角色失败:', error)
   } finally {

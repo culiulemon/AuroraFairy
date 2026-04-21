@@ -68,7 +68,13 @@ pub fn file_delete(path: &str, working_dir: &str, data_dir: Option<&str>, extra_
     let safe_path = validate_path(path, working_dir, data_dir, extra_allowed_paths)?;
     
     if is_corefile_path(&safe_path) {
-        return Err("COREFILE_PROTECTED:核心文件受保护，禁止通过工具删除。请使用角色设置页面管理。".to_string());
+        let is_rebirth = safe_path.file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == "REBIRTH.md")
+            .unwrap_or(false);
+        if !is_rebirth {
+            return Err("COREFILE_PROTECTED:核心文件受保护，禁止通过工具删除。请使用角色设置页面管理。".to_string());
+        }
     }
     
     if !safe_path.exists() {

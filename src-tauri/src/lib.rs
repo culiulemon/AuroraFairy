@@ -33,6 +33,8 @@ struct AppConfig {
     global_working_dir: Option<String>,
     #[serde(rename = "perConversationWorkingDir")]
     per_conversation_working_dir: Option<String>,
+    #[serde(rename = "modelsDir")]
+    models_dir: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -40,6 +42,7 @@ impl Default for AppConfig {
         AppConfig {
             global_working_dir: None,
             per_conversation_working_dir: None,
+            models_dir: None,
         }
     }
 }
@@ -61,6 +64,11 @@ fn load_app_config(app_handle: &tauri::AppHandle) -> AppConfig {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => AppConfig::default(),
     }
+}
+
+pub(crate) fn get_configured_models_dir(app_handle: &tauri::AppHandle) -> Option<String> {
+    let config = load_app_config(app_handle);
+    config.models_dir
 }
 
 fn save_app_config(app_handle: &tauri::AppHandle, config: &AppConfig) -> Result<(), String> {
@@ -344,6 +352,31 @@ fn set_working_dir_config(app: tauri::AppHandle, working_dir: Option<String>) ->
     save_app_config(&app, &config)
 }
 
+#[derive(Serialize)]
+struct ModelsDirConfigResponse {
+    models_dir: Option<String>,
+    default_models_dir: String,
+}
+
+#[tauri::command]
+fn get_models_dir_config(app: tauri::AppHandle) -> Result<ModelsDirConfigResponse, String> {
+    let config = load_app_config(&app);
+    let default_dir = get_data_dir(&app)
+        .map(|d| d.join("models").to_string_lossy().to_string())
+        .unwrap_or_else(|_| String::from(""));
+    Ok(ModelsDirConfigResponse {
+        models_dir: config.models_dir,
+        default_models_dir: default_dir,
+    })
+}
+
+#[tauri::command]
+fn set_models_dir_config(app: tauri::AppHandle, models_dir: Option<String>) -> Result<(), String> {
+    let mut config = load_app_config(&app);
+    config.models_dir = models_dir;
+    save_app_config(&app, &config)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
@@ -475,6 +508,8 @@ pub fn run() {
             open_folder,
             get_working_dir_config,
             set_working_dir_config,
+            get_models_dir_config,
+            set_models_dir_config,
             shell_execute,
             file_read,
             file_write,

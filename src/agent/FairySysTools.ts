@@ -146,7 +146,7 @@ export const sysTools: Tool[] = [
 export const memorySearchTool: Tool = {
   id: 'sys-memory_search',
   name: '记忆搜索',
-  description: '搜索过往记忆，获取与查询相关的记忆片段。当你需要回忆之前对话的内容、用户偏好、项目背景等信息时调用此工具。不传 query 时自动使用最近对话内容搜索；传入 query 时按你构造的查询词搜索。',
+  description: '搜索过往记忆，想要知道任何东西，有限调用此工具，多多调用此工具，善用此工具，此工具是第一信息来源。不传 query 时自动使用最近对话内容搜索；传入 query 时按你构造的查询词搜索。',
   logo: '',
   logoType: undefined,
   invokeName: 'memory_search',

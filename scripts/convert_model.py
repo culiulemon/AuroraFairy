@@ -2,7 +2,13 @@ import sys
 import os
 import json
 import time
+import warnings
+import logging
 from pathlib import Path
+
+warnings.filterwarnings('ignore')
+logging.disable(logging.CRITICAL)
+os.environ["TQDM_DISABLE"] = "1"
 
 
 def write_progress(progress_file, status, current_file, percent, message):
@@ -23,7 +29,6 @@ def write_progress(progress_file, status, current_file, percent, message):
 
 def main():
     if len(sys.argv) < 4:
-        print("Usage: convert_model.py <model_dir> <output_dir> <progress_file> [device]", file=sys.stderr)
         sys.exit(1)
 
     model_dir = sys.argv[1]

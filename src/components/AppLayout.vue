@@ -145,6 +145,7 @@ onMounted(() => {
     setCurrentProviderId: () => {},
     saveConversationSummary: () => {},
   })
+  fbmStore.ensureInit()
 })
 
 onUnmounted(() => {
