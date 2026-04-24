@@ -387,6 +387,39 @@ export class FairyDo {
     }
   }
 
+  private async executeVirtual(
+    handler: (input: Record<string, unknown>, signal?: AbortSignal) => Promise<string>,
+    input: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<ToolResult> {
+    const task = handler(input, signal)
+    if (!signal) {
+      try {
+        return { success: true, data: await task }
+      } catch (error) {
+        return { success: false, error: { code: 'VIRTUAL_TOOL_ERROR', message: error instanceof Error ? error.message : String(error) } }
+      }
+    }
+
+    if (signal.aborted) {
+      return { success: false, error: { code: 'ABORTED', message: '工具执行被用户取消' } }
+    }
+
+    const abortPromise = new Promise<never>((_, reject) => {
+      signal.addEventListener('abort', () => reject(new ToolAbortError()), { once: true })
+    })
+
+    try {
+      const data = await Promise.race([task, abortPromise])
+      return { success: true, data }
+    } catch (error) {
+      if (error instanceof ToolAbortError) {
+        return { success: false, error: { code: 'ABORTED', message: '工具执行被用户取消' } }
+      }
+      return { success: false, error: { code: 'VIRTUAL_TOOL_ERROR', message: error instanceof Error ? error.message : String(error) } }
+    }
+  }
+
   async execute(toolName: string, input: Record<string, unknown>, signal?: AbortSignal, extraAllowedPaths?: string[]): Promise<ToolResult> {
     if (isAggregateTool(toolName)) {
       const resolved = resolveAction(toolName, input)
@@ -397,13 +430,7 @@ export class FairyDo {
 
       const virtualHandler = this.virtualHandlers.get(executor)
       if (virtualHandler) {
-        try {
-          const data = await virtualHandler(remainingInput, signal)
-          return { success: true, data }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          return { success: false, error: { code: 'VIRTUAL_TOOL_ERROR', message } }
-        }
+        return this.executeVirtual(virtualHandler, remainingInput, signal)
       }
 
       return this.invokeBackend(executor as ExecutorName, remainingInput, signal, extraAllowedPaths)
@@ -411,13 +438,7 @@ export class FairyDo {
 
     const virtualHandler = this.virtualHandlers.get(toolName)
     if (virtualHandler) {
-      try {
-        const data = await virtualHandler(input, signal)
-        return { success: true, data }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return { success: false, error: { code: 'VIRTUAL_TOOL_ERROR', message } }
-      }
+      return this.executeVirtual(virtualHandler, input, signal)
     }
 
     const tool = this.tools.get(toolName)

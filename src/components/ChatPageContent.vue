@@ -374,6 +374,9 @@ const handleSendMessage = async (content: string) => {
       }
     }
   } finally {
+    if (currentLoadingMessageId && activeConversation.value) {
+      setMessageLoading(activeConversation.value.id, currentLoadingMessageId, false)
+    }
     isGenerating.value = false
     abortController = null
     currentLoadingMessageId = null

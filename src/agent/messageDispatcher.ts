@@ -267,9 +267,23 @@ export async function dispatchMessage(
     return ''
   })()
 
-  const [{ skillsPrompt, activatedSkills, writableSkillDirs }, memoryContext] = await Promise.all([skillTask, memoryTask])
+  const abortRace = signal
+    ? new Promise<never>((_, reject) => {
+        if (signal.aborted) { reject(new DOMException('Aborted', 'AbortError')); return }
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+      })
+    : new Promise<never>(() => {})
+
+  const [{ skillsPrompt, activatedSkills, writableSkillDirs }, memoryContext] = await Promise.race([
+    Promise.all([skillTask, memoryTask]),
+    abortRace,
+  ])
+
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
   const systemPrompt = await assembleSystemPrompt(skillsPrompt)
+
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
   const userTools = await loadAllTools()
   const filtered = userTools.filter(t => !t.id.startsWith('sys-') && !t.id.startsWith('builtin-'))
@@ -293,6 +307,8 @@ export async function dispatchMessage(
     conversationId: conv.id,
     providerId: provider.id,
   })
+
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
   const llmMessages = contextResult.messages
 

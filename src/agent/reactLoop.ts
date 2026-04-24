@@ -229,6 +229,8 @@ export async function executeReActLoop(
     messages.push(formatToolCallsMessage(response.toolCalls) as unknown as ChatMessage)
 
     for (const toolCall of response.toolCalls) {
+      if (config.signal?.aborted) break
+
       config.onToolExecuting?.(toolCall.id, toolCall.name, toolCall.input)
 
       addDebugLog('request', `Tool Call: ${toolCall.name}`, JSON.stringify(toolCall.input, null, 2), {
@@ -239,6 +241,11 @@ export async function executeReActLoop(
       const extraAllowedPaths = approvedPaths.size > 0 ? Array.from(approvedPaths) : undefined
       const result = await fairyDo.execute(toolCall.name, toolCall.input, config.signal, extraAllowedPaths)
 
+      if (config.signal?.aborted) {
+        console.log('[ReActLoop] 工具执行后被中止，跳出循环')
+        break
+      }
+
       if (!result.success && result.error?.message && isOutOfWorkdirError(result.error.message)) {
         const targetPath = extractOutOfWorkdirPath(result.error.message)
         addDebugLog('error', `路径越界: ${toolCall.name}`, `尝试访问: ${targetPath}`, {
@@ -248,6 +255,7 @@ export async function executeReActLoop(
 
         if (config.onApproveAccess && !approvedPaths.has(targetPath)) {
           const approved = await config.onApproveAccess(toolCall.name, targetPath)
+          if (config.signal?.aborted) break
           if (approved) {
             approvedPaths.add(targetPath)
             addDebugLog('info', '用户授权访问', targetPath, { toolName: toolCall.name })

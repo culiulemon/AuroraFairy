@@ -308,7 +308,8 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
         provider.protocol,
         request.onChunk,
         request.onReasoningChunk,
-        request.onToolCall
+        request.onToolCall,
+        request.signal
       )
     }
     return await streamChat(
@@ -457,6 +458,7 @@ async function streamChat(
 
   try {
     while (true) {
+      if (signal?.aborted) break
       const { done, value } = await reader.read()
       if (done) break
 
@@ -576,7 +578,8 @@ async function proxyStreamChat(
   protocol: string,
   onChunk: (chunk: string) => void,
   onReasoningChunk: ((chunk: string) => void) | undefined,
-  onToolCall: ((toolCall: ToolUseBlock) => void) | undefined
+  onToolCall: ((toolCall: ToolUseBlock) => void) | undefined,
+  signal?: AbortSignal
 ): Promise<ChatResponse> {
   const { listen } = await import('@tauri-apps/api/event')
 
@@ -587,7 +590,7 @@ async function proxyStreamChat(
   let currentToolCallIndex = -1
   let done = false
 
-  const chunkListener = listen<number[]>('proxy-chat-chunk', (event) => {
+  const unlistenChunk = await listen<number[]>('proxy-chat-chunk', (event) => {
     const bytes = new Uint8Array(event.payload)
     const chunk = new TextDecoder().decode(bytes, { stream: true })
     const lines = chunk.split('\n')
@@ -667,46 +670,63 @@ async function proxyStreamChat(
             }
           }
         } catch {
-          // 忽略解析错误
         }
       }
     }
   })
 
-  const errorListener = listen<string>('proxy-chat-error', (event) => {
+  const unlistenError = await listen<string>('proxy-chat-error', (event) => {
     console.error('[Chat] Proxy stream error:', event.payload)
   })
 
-  const doneListener = listen('proxy-chat-done', () => {
+  const unlistenDone = await listen('proxy-chat-done', () => {
+    done = true
+  })
+
+  let invokeError: string | null = null
+  invoke('proxy_chat_stream', {
+    request: { url, headers, body }
+  }).catch((error) => {
+    invokeError = String(error)
     done = true
   })
 
   try {
-    await invoke('proxy_chat_stream', {
-      request: {
-        url,
-        headers,
-        body
+    await new Promise<void>((resolve, reject) => {
+      const checkDone = setInterval(() => {
+        if (done) {
+          clearInterval(checkDone)
+          resolve()
+        }
+      }, 50)
+
+      if (signal) {
+        if (signal.aborted) {
+          clearInterval(checkDone)
+          reject(new DOMException('Aborted', 'AbortError'))
+          return
+        }
+        signal.addEventListener('abort', () => {
+          clearInterval(checkDone)
+          reject(new DOMException('Aborted', 'AbortError'))
+        }, { once: true })
       }
     })
   } catch (error) {
-    console.error('[Chat] Proxy stream invoke failed:', error)
-    addDebugLog('error', 'Proxy Stream Invoke Failed', String(error), { url })
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error
+    }
     throw error
+  } finally {
+    unlistenChunk()
+    unlistenError()
+    unlistenDone()
   }
 
-  await new Promise<void>((resolve) => {
-    const checkDone = setInterval(() => {
-      if (done) {
-        clearInterval(checkDone)
-        resolve()
-      }
-    }, 50)
-  })
-
-  ;(await chunkListener)()
-  ;(await errorListener)()
-  ;(await doneListener)()
+  if (invokeError) {
+    addDebugLog('error', 'Proxy Stream Invoke Failed', invokeError, { url })
+    throw new Error(invokeError)
+  }
 
   addDebugLog('response', `Proxy Stream Complete`, fullContent + (collectedToolCalls.length > 0
     ? '\n\n--- Tool Calls ---\n' + collectedToolCalls.map(tc =>
