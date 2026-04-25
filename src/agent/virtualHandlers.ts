@@ -4,8 +4,10 @@ import { executeSubAgent } from './subAgent'
 import type { Tool } from '../types/tool'
 import type { TaskItem, TaskStatus } from '../types/task'
 import { invoke } from '@tauri-apps/api/core'
-import { fbmStore } from '../stores/fbmStore'
+import { fbmStore, getLLMAdapter } from '../stores/fbmStore'
 import { loadSettings, saveSettings } from '../stores/settings'
+import { skillManager } from './skills/skillManager'
+import { formatActiveSkillPrompt } from './skills/skillInjector'
 
 export interface VirtualHandlerDeps {
   getCurrentTools: () => Tool[]
@@ -338,5 +340,32 @@ export function registerVirtualHandlers(
     }
 
     return JSON.stringify({ success: false, error: '未知的 action，支持 list、hello 或 call' })
+  })
+
+  fairyDo.registerVirtualHandler('request_skill', async (input) => {
+    const query = typeof input.query === 'string' && input.query.trim() ? input.query.trim() : null
+    if (!query) {
+      return '错误: 请提供 query 参数描述你需要什么领域的知识或技能'
+    }
+
+    try {
+      const llm = await getLLMAdapter()
+      if (!llm) {
+        return '错误: LLM 适配器不可用，无法进行技能匹配'
+      }
+
+      const matchedSkills = await skillManager.matchSkills(query, llm)
+      if (matchedSkills.length === 0) {
+        return `没有找到与「${query}」相关的技能`
+      }
+
+      const matchedNames = matchedSkills.map(s => s.name)
+      const contentMap = await skillManager.getSkillContentMap(matchedNames)
+      const formatted = formatActiveSkillPrompt(matchedSkills, contentMap)
+      return formatted
+    } catch (e) {
+      console.warn('[RequestSkill] Error:', e)
+      return `技能请求失败: ${e instanceof Error ? e.message : String(e)}`
+    }
   })
 }

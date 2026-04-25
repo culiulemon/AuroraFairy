@@ -15,6 +15,8 @@ let skillEntries: Map<string, SkillEntry> = new Map()
 let skillIndex: SkillIndex | null = null
 let initialized = false
 
+const binExistsCache: Map<string, boolean> = new Map()
+
 const EVOLVE_COOLDOWN_MS = 5 * 60 * 1000
 const evolveLastRun: Map<string, number> = new Map()
 
@@ -36,12 +38,16 @@ function getCurrentOs(): 'windows' | 'macos' | 'linux' {
 }
 
 async function checkBinExists(bin: string): Promise<boolean> {
+  const cached = binExistsCache.get(bin)
+  if (cached !== undefined) return cached
   const os = getCurrentOs()
-  const cmd = os === 'windows' ? `where ${bin} 2>nul` : `which ${bin} 2>/dev/null`
+  const cmd = os === 'windows' ? `where.exe ${bin}` : `which ${bin} 2>/dev/null`
   try {
     await invoke<string>('shell_execute', { command: cmd, timeout: 5 })
+    binExistsCache.set(bin, true)
     return true
   } catch {
+    binExistsCache.set(bin, false)
     return false
   }
 }
@@ -90,13 +96,8 @@ async function checkGating(entry: SkillEntry): Promise<SkillGatingStatus> {
   }
 
   if (requires.bins && requires.bins.length > 0) {
-    const missing: string[] = []
-    for (const bin of requires.bins) {
-      const exists = await checkBinExists(bin)
-      if (!exists) {
-        missing.push(bin)
-      }
-    }
+    const existsResults = await Promise.all(requires.bins.map(b => checkBinExists(b)))
+    const missing = requires.bins.filter((_, i) => !existsResults[i])
     if (missing.length > 0) {
       status.eligible = false
       status.missingBins = missing
@@ -135,9 +136,14 @@ async function saveIndex(): Promise<void> {
 
 async function buildIndex(): Promise<void> {
   const entries: Record<string, SkillIndexEntry> = {}
+  const entryList = Array.from(skillEntries.entries())
 
-  for (const [name, entry] of skillEntries) {
-    const gatingStatus = await checkGating(entry)
+  const gatingResults = await Promise.all(
+    entryList.map(([, entry]) => checkGating(entry))
+  )
+
+  for (let i = 0; i < entryList.length; i++) {
+    const [name, entry] = entryList[i]
     entries[name] = {
       name,
       description: entry.frontmatter.description,
@@ -147,7 +153,7 @@ async function buildIndex(): Promise<void> {
       filePath: entry.filePath,
       skillDir: entry.filePath.replace(/[/\\]SKILL\.md$/i, ''),
       source: entry.source,
-      gatingStatus,
+      gatingStatus: gatingResults[i],
       enabled: true,
       readonly: entry.frontmatter.readonly !== false,
     }
@@ -197,12 +203,17 @@ export async function loadAllSkillsToManager(): Promise<void> {
     const indexPath = await getIndexPath()
     skillIndex = await readIndexFile(indexPath)
     if (skillIndex) {
-      for (const [, entry] of Object.entries(skillIndex.entries)) {
-        const skillEntry = skillEntries.get(entry.name)
-        const freshGating = await checkGating({
-          frontmatter: skillEntry?.frontmatter || {} as SkillFrontmatter,
-        } as SkillEntry)
-        entry.gatingStatus = freshGating
+      const indexEntries = Object.entries(skillIndex.entries)
+      const gatingResults = await Promise.all(
+        indexEntries.map(([, entry]) => {
+          const skillEntry = skillEntries.get(entry.name)
+          return checkGating({
+            frontmatter: skillEntry?.frontmatter || {} as SkillFrontmatter,
+          } as SkillEntry)
+        })
+      )
+      for (let i = 0; i < indexEntries.length; i++) {
+        indexEntries[i][1].gatingStatus = gatingResults[i]
       }
       initialized = true
       return
@@ -413,7 +424,7 @@ export async function installFromGit(repoUrl: string): Promise<{ success: boolea
 
   try {
     await invoke<string>('shell_execute', {
-      command: `mkdir "${skillsDir.replace(/\//g, '\\')}" 2>nul || echo ok`,
+      command: `New-Item -ItemType Directory -Path "${skillsDir.replace(/\//g, '\\')}" -Force | Out-Null`,
       timeout: 5,
     })
   } catch {
@@ -433,6 +444,7 @@ export async function installFromGit(repoUrl: string): Promise<{ success: boolea
 }
 
 export async function forceReloadSkills(): Promise<void> {
+  binExistsCache.clear()
   const skills = await loadAllSkills()
   skillEntries.clear()
   for (const skill of skills) {
@@ -467,7 +479,7 @@ export async function uninstallSkill(name: string): Promise<{ success: boolean; 
   try {
     const dir = entry.filePath.replace(/[/\\]SKILL\.md$/, '').replace(/\//g, '\\')
     await invoke('shell_execute', {
-      command: `rmdir /s /q "${dir}"`,
+      command: `Remove-Item -Recurse -Force "${dir}"`,
       timeout: 10,
     })
     delete skillIndex.entries[name]

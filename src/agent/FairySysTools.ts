@@ -4,7 +4,7 @@ export const sysTools: Tool[] = [
   {
     id: 'sys-execute_shell',
     name: '执行 Shell',
-    description: '执行 Shell 命令。Windows 默认使用 cmd，Linux/macOS 默认使用 sh。当命令包含 bash 语法（如 for...do...done、${VAR:-}、$(...) 等）时，请设置 shell_type 为 "bash"（Windows 需已安装 Git Bash）。支持直接执行 python 脚本（如 python script.py）。',
+    description: '执行 Shell 命令。Windows 默认使用 PowerShell，Linux/macOS 默认使用 sh。当命令包含 bash 语法（如 for...do...done、${VAR:-}、$(...) 等）时，请设置 shell_type 为 "bash"（Windows 需已安装 Git Bash）。支持直接执行 python 脚本（如 python script.py）。',
     logo: '',
     logoType: undefined,
     invokeName: 'execute_shell',
@@ -213,6 +213,25 @@ export const roleConfigTool: Tool = {
     { name: 'habitSupplement', type: 'string', description: '对你行为习惯的额外补充描述（action=update 时可选）', required: false },
   ],
   executor: 'role_config' as any,
+  code: undefined,
+  language: 'typescript',
+  createdAt: '2024-01-01T00:00:00.000Z',
+  updatedAt: '2024-01-01T00:00:00.000Z'
+}
+
+export const requestSkillTool: Tool = {
+  id: 'sys-request_skill',
+  name: '请求技能',
+  description: `根据需求描述搜索并加载技能知识。传入 query 参数描述你需要什么领域的知识或技能，系统会自动匹配最相关的技能并返回完整内容。
+使用场景：当你发现当前任务需要额外的领域知识、最佳实践或专业指导，且已激活的技能不足以覆盖时，使用此工具获取更多技能。`,
+  logo: '',
+  logoType: undefined,
+  invokeName: 'request_skill',
+  filePath: '',
+  parameters: [
+    { name: 'query', type: 'string', description: '描述你需要什么领域的知识或技能，例如"React 组件性能优化"或"使用 Tailwind CSS 实现响应式布局"', required: true },
+  ],
+  executor: 'request_skill' as any,
   code: undefined,
   language: 'typescript',
   createdAt: '2024-01-01T00:00:00.000Z',

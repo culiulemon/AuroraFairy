@@ -48,15 +48,11 @@ export async function scanSkillDir(dir: string, source: SkillSource): Promise<Sk
   } catch {
     return []
   }
-  const results: SkillEntry[] = []
-  for (const skillMdPath of skillPaths) {
-    const entry = await parseSkillMd(skillMdPath)
-    if (entry) {
-      entry.source = source
-      results.push(entry)
-    }
-  }
-  return results
+  const entries = await Promise.all(skillPaths.map(p => parseSkillMd(p)))
+  return entries.filter((e): e is SkillEntry => e !== null).map(e => {
+    e.source = source
+    return e
+  })
 }
 
 function ensureDirPath(base: string, ...parts: string[]): string {

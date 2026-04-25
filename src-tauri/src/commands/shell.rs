@@ -4,30 +4,70 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 #[cfg(target_os = "windows")]
-const DEFAULT_SHELL: &[&str] = &["cmd", "/C"];
-#[cfg(not(target_os = "windows"))]
-const DEFAULT_SHELL: &[&str] = &["sh", "-c"];
-
-#[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-fn resolve_shell(shell_type: &Option<String>) -> Result<Vec<&str>, String> {
+#[cfg(target_os = "windows")]
+fn resolve_powershell_path() -> Vec<String> {
+    use std::path::Path;
+
+    let program_files = std::env::var("ProgramFiles")
+        .unwrap_or_else(|_| r"C:\Program Files".to_string());
+    let pwsh7 = format!(r"{}\PowerShell\7\pwsh.exe", program_files);
+    if Path::new(&pwsh7).exists() {
+        return vec![pwsh7, "-NoProfile".into(), "-NonInteractive".into(), "-Command".into()];
+    }
+
+    if let Ok(program_w6432) = std::env::var("ProgramW6432") {
+        if program_w6432 != program_files {
+            let pwsh7_alt = format!(r"{}\PowerShell\7\pwsh.exe", program_w6432);
+            if Path::new(&pwsh7_alt).exists() {
+                return vec![pwsh7_alt, "-NoProfile".into(), "-NonInteractive".into(), "-Command".into()];
+            }
+        }
+    }
+
+    if which_binary_exists("pwsh") {
+        return vec!["pwsh".into(), "-NoProfile".into(), "-NonInteractive".into(), "-Command".into()];
+    }
+
+    let system_root = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("WINDIR"))
+        .unwrap_or_else(|_| r"C:\Windows".to_string());
+    let ps51 = format!(r"{}\System32\WindowsPowerShell\v1.0\powershell.exe", system_root);
+    if Path::new(&ps51).exists() {
+        return vec![ps51, "-NoProfile".into(), "-NonInteractive".into(), "-Command".into()];
+    }
+
+    vec!["powershell.exe".into(), "-NoProfile".into(), "-NonInteractive".into(), "-Command".into()]
+}
+
+fn resolve_shell(shell_type: &Option<String>) -> Result<Vec<String>, String> {
     match shell_type.as_deref() {
-        None | Some("default") => Ok(DEFAULT_SHELL.to_vec()),
-        Some("cmd") => Ok(vec!["cmd", "/C"]),
-        Some("powershell") | Some("pwsh") => Ok(vec!["powershell", "-Command"]),
+        None | Some("default") => {
+            #[cfg(target_os = "windows")]
+            { Ok(resolve_powershell_path()) }
+            #[cfg(not(target_os = "windows"))]
+            { Ok(vec!["sh".into(), "-c".into()]) }
+        }
+        Some("cmd") => Ok(vec!["cmd".into(), "/C".into()]),
+        Some("powershell") | Some("pwsh") => {
+            #[cfg(target_os = "windows")]
+            { Ok(resolve_powershell_path()) }
+            #[cfg(not(target_os = "windows"))]
+            { Ok(vec!["pwsh".into(), "-NoProfile".into(), "-NonInteractive".into(), "-Command".into()]) }
+        }
         Some("bash") => {
             #[cfg(target_os = "windows")]
             {
-                for candidate in &["bash", "git", "C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files (x86)\\Git\\bin\\bash.exe"] {
+                for candidate in &["bash", "git", r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files (x86)\Git\bin\bash.exe"] {
                     if which_shell(candidate).is_some() {
-                        return Ok(vec![which_shell(candidate).unwrap(), "-c"]);
+                        return Ok(vec![which_shell(candidate).unwrap().to_string(), "-c".into()]);
                     }
                 }
                 Err("bash 不可用: 未找到 bash 或 Git Bash，请安装 Git for Windows".to_string())
             }
             #[cfg(not(target_os = "windows"))]
-            { Ok(vec!["bash", "-c"]) }
+            { Ok(vec!["bash".into(), "-c".into()]) }
         }
         Some("sh") => {
             #[cfg(target_os = "windows")]
@@ -35,7 +75,7 @@ fn resolve_shell(shell_type: &Option<String>) -> Result<Vec<&str>, String> {
                 Err("sh 不可用: Windows 上不支持 sh，请使用 bash (需安装 Git Bash)".to_string())
             }
             #[cfg(not(target_os = "windows"))]
-            { Ok(vec!["sh", "-c"]) }
+            { Ok(vec!["sh".into(), "-c".into()]) }
         }
         Some(other) => Err(format!("不支持的 shell 类型: {}，可选: default, cmd, powershell, bash, sh", other)),
     }
@@ -55,7 +95,7 @@ fn which_shell(name: &str) -> Option<&str> {
 
 #[cfg(target_os = "windows")]
 fn which_binary_exists(name: &str) -> bool {
-    std::process::Command::new("where")
+    std::process::Command::new("where.exe")
         .arg(name)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -96,10 +136,6 @@ fn decode_output(bytes: &[u8]) -> String {
     }
 }
 
-fn needs_cmd_percent_escape(shell_parts: &[&str]) -> bool {
-    shell_parts.get(0).map(|s| *s == "cmd").unwrap_or(false)
-}
-
 #[cfg(target_os = "windows")]
 fn write_temp_bat(command: &str) -> Result<std::path::PathBuf, String> {
     let temp_dir = std::env::temp_dir();
@@ -126,19 +162,21 @@ pub async fn shell_execute(command: String, timeout_secs: u64, shell_type: Optio
     }
 
     let shell_parts = resolve_shell(&shell_type)?;
-    let has_percent = command.contains('%') && needs_cmd_percent_escape(&shell_parts);
+
+    #[cfg(target_os = "windows")]
+    let use_cmd_bat = shell_type.as_deref() == Some("cmd") && command.contains('%');
 
     #[cfg(target_os = "windows")]
     let mut _temp_bat_to_clean: Option<std::path::PathBuf> = None;
 
-    let mut cmd = Command::new(shell_parts[0]);
-    if shell_parts.len() > 1 {
-        cmd.arg(shell_parts[1]);
+    let mut cmd = Command::new(&shell_parts[0]);
+    for arg in shell_parts.iter().skip(1) {
+        cmd.arg(arg);
     }
 
     #[cfg(target_os = "windows")]
     {
-        if has_percent {
+        if use_cmd_bat {
             let bat_path = write_temp_bat(&command)?;
             let bat_str = bat_path.to_string_lossy().to_string();
             cmd.arg(&bat_str);
