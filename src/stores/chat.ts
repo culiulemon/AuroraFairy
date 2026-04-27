@@ -253,11 +253,25 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
       }))
     }
   } else {
+    const isThinkingEnabled = provider.thinkingEnabled && (provider.protocol === 'openai' || provider.protocol === 'custom')
+    const messages = isThinkingEnabled
+      ? request.messages.map(m => {
+          if (m.role === 'assistant' && !('reasoning_content' in m)) {
+            return { ...m, reasoning_content: '' }
+          }
+          return m
+        })
+      : request.messages
+
     body = {
       model,
-      messages: request.messages,
+      messages,
       temperature: 0.7,
       stream: !!request.onChunk
+    }
+
+    if (request.onChunk) {
+      body.stream_options = { include_usage: true }
     }
 
     if (provider.protocol === 'openai' || provider.protocol === 'custom') {
@@ -346,6 +360,10 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
       }
 
       const toolCalls = extractToolCalls(result.data.choices?.[0]?.message?.tool_calls)
+      const reasoningContent = result.data.choices?.[0]?.message?.reasoning_content || ''
+      if (reasoningContent && request.onReasoningChunk) {
+        request.onReasoningChunk(reasoningContent)
+      }
       return {
         content: result.data.choices?.[0]?.message?.content || '',
         usage: result.data.usage,
@@ -391,6 +409,10 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
     }
 
     const toolCalls = extractToolCalls(data.choices?.[0]?.message?.tool_calls)
+    const reasoningContent = data.choices?.[0]?.message?.reasoning_content || ''
+    if (reasoningContent && request.onReasoningChunk) {
+      request.onReasoningChunk(reasoningContent)
+    }
     return {
       content: data.choices[0]?.message?.content || '',
       usage: data.usage,
@@ -479,6 +501,20 @@ async function streamChat(
                 const text = parsed.delta?.text || ''
                 fullContent += text
                 onChunk(text)
+              } else if (parsed.type === 'message_start' && parsed.message?.usage) {
+                usage = {
+                  prompt_tokens: parsed.message.usage.input_tokens || 0,
+                  completion_tokens: 0,
+                  total_tokens: parsed.message.usage.input_tokens || 0
+                }
+              } else if (parsed.type === 'message_delta' && parsed.usage) {
+                const outputTokens = parsed.usage.output_tokens || 0
+                if (usage) {
+                  usage.completion_tokens = outputTokens
+                  usage.total_tokens = usage.prompt_tokens + outputTokens
+                } else {
+                  usage = { prompt_tokens: 0, completion_tokens: outputTokens, total_tokens: outputTokens }
+                }
               }
             } else {
               const reasoningContent = parsed.choices?.[0]?.delta?.reasoning_content || ''
@@ -612,6 +648,20 @@ async function proxyStreamChat(
               const text = parsed.delta?.text || ''
               fullContent += text
               onChunk(text)
+            } else if (parsed.type === 'message_start' && parsed.message?.usage) {
+              usage = {
+                prompt_tokens: parsed.message.usage.input_tokens || 0,
+                completion_tokens: 0,
+                total_tokens: parsed.message.usage.input_tokens || 0
+              }
+            } else if (parsed.type === 'message_delta' && parsed.usage) {
+              const outputTokens = parsed.usage.output_tokens || 0
+              if (usage) {
+                usage.completion_tokens = outputTokens
+                usage.total_tokens = usage.prompt_tokens + outputTokens
+              } else {
+                usage = { prompt_tokens: 0, completion_tokens: outputTokens, total_tokens: outputTokens }
+              }
             }
           } else {
             const reasoningContent = parsed.choices?.[0]?.delta?.reasoning_content || ''

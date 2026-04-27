@@ -131,6 +131,7 @@ export async function executeReActLoop(
   const allToolCalls: ToolUseBlock[] = []
   const toolResults: ReActResult['toolResults'] = []
   let iterationsExecuted = 0
+  let accumulatedUsage: TokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   const approvedPaths = new Set<string>()
   if (config.extraAllowedPaths) {
     for (const p of config.extraAllowedPaths) {
@@ -204,7 +205,10 @@ export async function executeReActLoop(
     })
 
     if (response.usage) {
-      config.onUsage?.(response.usage)
+      accumulatedUsage.prompt_tokens += response.usage.prompt_tokens
+      accumulatedUsage.completion_tokens += response.usage.completion_tokens
+      accumulatedUsage.total_tokens += response.usage.total_tokens
+      config.onUsage?.({ ...accumulatedUsage })
     }
 
     console.log(`[ReActLoop] 模型响应完成, 本轮工具调用: ${turnToolCalls.length}, 累计: ${allToolCalls.length}`)

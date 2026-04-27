@@ -455,6 +455,7 @@ pub async fn check_environment() -> Result<EnvironmentStatus, String> {
 pub struct GpuInfo {
     pub vendor: String,
     pub name: String,
+    /// GPU类型：`"discrete"` 独立显卡，`"integrated"` 集成显卡，`"unknown"` 未知类型
     pub gpu_type: String,
 }
 

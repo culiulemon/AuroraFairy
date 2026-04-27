@@ -193,7 +193,7 @@
             class="toggle-input"
             :disabled="isEmbeddingModel"
           />
-          <div class="toggle-slider" :class="{ disabled: isEmbeddingModel }" @click="!isEmbeddingModel && (formData.thinkingEnabled = !formData.thinkingEnabled)"></div>
+          <div class="toggle-slider" @click="formData.thinkingEnabled = !formData.thinkingEnabled"></div>
         </div>
         <span class="toggle-hint">启用后模型将输出推理过程（仅 OpenAI/custom 协议支持）<template v-if="isEmbeddingModel">，嵌入模型不支持</template></span>
       </div>
@@ -207,7 +207,7 @@
             class="toggle-input"
             :disabled="isEmbeddingModel"
           />
-          <div class="toggle-slider" :class="{ disabled: isEmbeddingModel }" @click="!isEmbeddingModel && (formData.supportsTools = !formData.supportsTools)"></div>
+          <div class="toggle-slider" @click="formData.supportsTools = !formData.supportsTools"></div>
         </div>
         <span class="toggle-hint">关闭后向模型发送请求时不携带 tools 参数<template v-if="isEmbeddingModel">，嵌入模型不支持</template></span>
       </div>
@@ -968,7 +968,4 @@ async function testConnection(provider: ApiProvider) {
   pointer-events: none;
 }
 
-.toggle-slider.disabled {
-  cursor: not-allowed;
-}
 </style>
