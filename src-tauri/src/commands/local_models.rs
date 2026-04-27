@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 #[cfg(target_os = "windows")]
 #[allow(unused_imports)]
@@ -73,6 +73,35 @@ fn get_models_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> 
             .map_err(|e| format!("无法创建模型目录: {}", e))?;
     }
     Ok(models_dir)
+}
+
+fn find_script(app: &tauri::AppHandle, script_name: &str) -> Result<std::path::PathBuf, String> {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let script = resource_dir.join("scripts").join(script_name);
+        if script.exists() {
+            return Ok(script);
+        }
+    }
+
+    let exe_dir = std::env::current_exe()
+        .map_err(|e| format!("无法确定 exe 路径: {}", e))?
+        .parent()
+        .ok_or("无法确定 exe 目录")?
+        .to_path_buf();
+
+    let script = exe_dir.join("scripts").join(script_name);
+    if script.exists() {
+        return Ok(script);
+    }
+
+    if let Ok(project_root) = crate::get_project_root() {
+        let script = project_root.join("scripts").join(script_name);
+        if script.exists() {
+            return Ok(script);
+        }
+    }
+
+    Err(format!("脚本不存在: {}", script_name))
 }
 
 fn cleanup_modelscope_lock(model_id: &str) {
@@ -199,7 +228,7 @@ async fn openvino_api_post_json(
 }
 
 async fn start_model_server(
-    _app: &tauri::AppHandle,
+    app: &tauri::AppHandle,
     backend: &Backend,
     port: u16,
 ) -> Result<(), String> {
@@ -223,11 +252,7 @@ async fn start_model_server(
 
     let mut cmd = match backend {
         Backend::OpenVINO => {
-            let project_root = crate::get_project_root()?;
-            let script_path = project_root.join("scripts").join("openvino_server.py");
-            if !script_path.exists() {
-                return Err(format!("OpenVINO 服务器脚本不存在: {:?}", script_path));
-            }
+            let script_path = find_script(app, "openvino_server.py")?;
             let port_str = port.to_string();
             let script_str = script_path.to_string_lossy().to_string();
             let mut c = Command::new("python");
@@ -251,11 +276,7 @@ async fn start_model_server(
             return Err("TensorRT-LLM 后端尚未实现".to_string());
         }
         Backend::Transformers => {
-            let project_root = crate::get_project_root()?;
-            let script_path = project_root.join("scripts").join("transformers_server.py");
-            if !script_path.exists() {
-                return Err(format!("Transformers 服务器脚本不存在: {:?}", script_path));
-            }
+            let script_path = find_script(app, "transformers_server.py")?;
             let port_str = port.to_string();
             let script_str = script_path.to_string_lossy().to_string();
             let mut c = Command::new("python");
@@ -904,12 +925,7 @@ pub async fn download_model(
     }
 
     let abs_local_dir = models_dir.join(local_dir.split('/').last().unwrap_or(&local_dir));
-    let project_root = crate::get_project_root()?;
-    let script_path = project_root.join("scripts").join("download_model.py");
-
-    if !script_path.exists() {
-        return Err(format!("下载脚本不存在: {:?}", script_path));
-    }
+    let script_path = find_script(&app, "download_model.py")?;
 
     let progress_file_str = progress_file_path.to_string_lossy().to_string();
 
@@ -944,17 +960,27 @@ pub async fn download_model(
         let mut last_status = String::new();
         let mut ticker = interval(Duration::from_millis(500));
         let mut cancelled = false;
+        let mut no_progress_ticks: u32 = 0;
 
         loop {
             ticker.tick().await;
 
-            {
-                let map = processes_clone.lock().await;
+            let process_exited = {
+                let mut map = processes_clone.lock().await;
                 if !map.contains_key(&model_id_clone) {
                     cancelled = true;
                     break;
                 }
-            }
+                if let Some(child) = map.get_mut(&model_id_clone) {
+                    match child.try_wait() {
+                        Ok(Some(_status)) => true,
+                        Ok(None) => false,
+                        Err(_) => true,
+                    }
+                } else {
+                    true
+                }
+            };
 
             if Path::new(&progress_file_str).exists() {
                 if let Ok(content) = fs::read_to_string(&progress_file_str) {
@@ -993,8 +1019,45 @@ pub async fn download_model(
                             break;
                         }
                         last_status = status;
+                        no_progress_ticks = 0;
                     }
                 }
+            } else {
+                no_progress_ticks += 1;
+            }
+
+            if process_exited && last_status != "completed" && last_status != "error" {
+                cleanup_modelscope_lock(&model_id_clone);
+                let _ = fs::remove_file(&progress_file_str);
+                let progress = DownloadProgress {
+                    model_id: model_id_clone.clone(),
+                    status: "error".to_string(),
+                    current_file: String::new(),
+                    progress_percent: 0.0,
+                    message: "下载进程异常退出，请检查 Python 和 ModelScope 是否已安装".to_string(),
+                };
+                let _ = app_clone.emit("model-download-progress", progress);
+                let mut map = processes_clone.lock().await;
+                map.remove(&model_id_clone);
+                return;
+            }
+
+            if no_progress_ticks > 120 {
+                cleanup_modelscope_lock(&model_id_clone);
+                let _ = fs::remove_file(&progress_file_str);
+                let progress = DownloadProgress {
+                    model_id: model_id_clone.clone(),
+                    status: "error".to_string(),
+                    current_file: String::new(),
+                    progress_percent: 0.0,
+                    message: "下载超时，60秒内无进度更新".to_string(),
+                };
+                let _ = app_clone.emit("model-download-progress", progress);
+                let mut map = processes_clone.lock().await;
+                if let Some(mut child) = map.remove(&model_id_clone) {
+                    let _ = child.kill().await;
+                }
+                return;
             }
         }
 
@@ -1126,11 +1189,7 @@ pub async fn convert_model_to_ir(
         return Ok(ir_output_dir);
     }
 
-    let project_root = crate::get_project_root()?;
-    let convert_script = project_root.join("scripts").join("convert_model.py");
-    if !convert_script.exists() {
-        return Err(format!("转换脚本不存在: {:?}", convert_script));
-    }
+    let convert_script = find_script(&app, "convert_model.py")?;
 
     let progress_file = models_dir.join(format!(
         ".convert_progress_{}.json",

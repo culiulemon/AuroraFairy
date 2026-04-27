@@ -171,7 +171,7 @@ defineEmits<{
   back: []
 }>()
 
-const appVersion = ref('0.1.10')
+const appVersion = ref('0.1.11')
 const showOpensource = ref(false)
 const buildVersion = ref('dev')
 const runtimeInfo = ref('Tauri')

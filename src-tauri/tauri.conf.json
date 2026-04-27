@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Fairy",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "identifier": "com.aurorafairy.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -48,7 +48,11 @@
     },
     "resources": [
       "binaries/qdrant.exe",
-      "binaries/fairy-action.exe"
+      "binaries/fairy-action.exe",
+      "../scripts/download_model.py",
+      "../scripts/convert_model.py",
+      "../scripts/openvino_server.py",
+      "../scripts/transformers_server.py"
     ]
   }
 }
