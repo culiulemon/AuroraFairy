@@ -40,12 +40,12 @@
                   </span>
                   <button class="env-info-btn" @click="showDepInfo('python')" title="查看详情">ⓘ</button>
                 </div>
-                <div class="env-check-row" :class="{ ok: environmentStatus.gpus.length > 0, fail: environmentStatus.gpus.length === 0 }">
+                <div class="env-check-row" :class="{ ok: discreteGpus.length > 0, fail: discreteGpus.length === 0 }">
                   <span class="env-check-name">GPU</span>
                   <span class="env-check-status">
                     <template v-if="environmentStatus.gpus.length > 0">
-                      <span class="env-check-ok" v-for="(gpu, i) in environmentStatus.gpus" :key="i" :title="gpu.name">
-                        {{ gpu.vendor }}
+                      <span class="env-check-ok" v-for="(gpu, i) in environmentStatus.gpus" :key="i" :title="gpu.name + (gpu.gpu_type === 'integrated' ? ' (集成显卡)' : gpu.gpu_type === 'discrete' ? ' (独立显卡)' : '')">
+                        {{ gpu.vendor }}{{ gpu.gpu_type === 'integrated' ? '(集)' : '' }}
                       </span>
                     </template>
                     <span class="env-check-missing" v-else>未检测到</span>
@@ -86,7 +86,7 @@
                   </span>
                   <button class="env-info-btn" @click="showDepInfo('llamacpp')" title="查看详情">ⓘ</button>
                 </div>
-                <div class="env-check-row" :class="{ ok: environmentStatus.oneapi, fail: !environmentStatus.oneapi }" v-if="environmentStatus.gpus.some(g => g.vendor === 'Intel')">
+                <div class="env-check-row" :class="{ ok: environmentStatus.oneapi, fail: !environmentStatus.oneapi }" v-if="environmentStatus.gpus.some(g => g.vendor === 'Intel' && g.gpu_type === 'discrete')">
                   <span class="env-check-name">Intel oneAPI</span>
                   <span class="env-check-status">
                     <span class="env-check-ok" v-if="environmentStatus.oneapi">已安装</span>
@@ -361,10 +361,11 @@
       <div class="form-group">
         <label>推理设备</label>
         <select class="device-select" v-model="deployConfigForm.device">
-          <option value="GPU">GPU (Intel Arc)</option>
+          <option value="GPU" v-if="discreteGpus.length > 0">GPU ({{ discreteGpuLabel }})</option>
           <option value="CPU">CPU</option>
         </select>
-        <span class="form-hint">选择 Intel GPU 可获得更快推理速度</span>
+        <span class="form-hint" v-if="discreteGpus.length > 0">选择 GPU 可获得更快推理速度</span>
+        <span class="form-hint" v-else>未检测到独立显卡，仅 CPU 可用</span>
       </div>
       <div class="form-group">
         <label>上下文长度</label>
@@ -541,11 +542,33 @@ function showDepInfo(key: string) {
   showDepInfoDialog.value = true
 }
 
+const discreteGpus = computed(() => {
+  if (!environmentStatus.value) return []
+  return environmentStatus.value.gpus.filter((g: any) => g.gpu_type === 'discrete')
+})
+
+const discreteGpuLabel = computed(() => {
+  const dgpus = discreteGpus.value
+  if (dgpus.length === 0) return ''
+  const vendors = [...new Set(dgpus.map((g: any) => g.vendor))]
+  if (vendors.includes('NVIDIA')) return 'NVIDIA CUDA'
+  if (vendors.includes('Intel')) return 'Intel Arc'
+  if (vendors.includes('AMD')) return 'AMD'
+  return vendors.join('/')
+})
+
 const envRecommendation = computed(() => {
   if (!environmentStatus.value) return ''
-  const hasIntelGpu = environmentStatus.value.gpus.some((g: any) => g.vendor === 'Intel')
-  if (hasIntelGpu) return '💡 检测到 Intel GPU，推荐安装 llama.cpp + oneAPI 以获得 GPU 加速'
-  if (environmentStatus.value.gpus.length > 0) return '💡 检测到 GPU，推荐安装 llama.cpp 以获得硬件加速'
+  const hasIntelDiscrete = environmentStatus.value.gpus.some((g: any) => g.vendor === 'Intel' && g.gpu_type === 'discrete')
+  const hasNvidia = environmentStatus.value.gpus.some((g: any) => g.vendor === 'NVIDIA')
+  const hasAmd = environmentStatus.value.gpus.some((g: any) => g.vendor === 'AMD')
+  const hasDiscrete = discreteGpus.value.length > 0
+  if (hasIntelDiscrete) return '💡 检测到 Intel Arc 独立显卡，推荐安装 llama.cpp + oneAPI 以获得 GPU 加速'
+  if (hasNvidia) return '💡 检测到 NVIDIA 独立显卡，推荐安装 llama.cpp 以获得 CUDA 加速'
+  if (hasAmd) return '💡 检测到 AMD 独立显卡，推荐安装 llama.cpp 以获得硬件加速'
+  if (hasDiscrete) return '💡 检测到独立显卡，推荐安装 llama.cpp 以获得硬件加速'
+  const hasIntegrated = environmentStatus.value.gpus.some((g: any) => g.gpu_type === 'integrated')
+  if (hasIntegrated) return '💡 仅检测到集成显卡，推荐安装 llama.cpp 使用 CPU 推理'
   return '💡 纯 CPU 环境，推荐安装 llama.cpp 作为推理后端'
 })
 
@@ -651,7 +674,7 @@ function openDeployConfig(model: LocalModel) {
   const config = model.deployConfig || getDefaultDeployConfig()
   deployConfigForm.ctxSize = config.ctxSize
   deployConfigForm.threads = config.threads
-  deployConfigForm.device = config.device || 'GPU'
+  deployConfigForm.device = config.device || (discreteGpus.value.length > 0 ? 'GPU' : 'CPU')
   deployConfigForm.port = config.port || 8000
   deployConfigForm.backend = config.backend || getBackendForFormat(model.modelFormat)
   showDeployConfig.value = true

@@ -328,7 +328,8 @@ export class FairyDo {
     executor: ExecutorName,
     input: Record<string, unknown>,
     signal?: AbortSignal,
-    extraAllowedPaths?: string[]
+    extraAllowedPaths?: string[],
+    workingDirOverride?: string
   ): Promise<ToolResult> {
     const validation = this.validateInput(executor, input)
     if (!validation.valid) {
@@ -344,6 +345,10 @@ export class FairyDo {
 
     if (executor.startsWith('file_') && extraAllowedPaths && extraAllowedPaths.length > 0) {
       invokeInput['extraAllowedPaths'] = extraAllowedPaths
+    }
+
+    if (executor.startsWith('file_') && workingDirOverride) {
+      invokeInput['workingDirOverride'] = workingDirOverride
     }
 
     const timeoutMs = this.getTimeout(executor)
@@ -420,7 +425,7 @@ export class FairyDo {
     }
   }
 
-  async execute(toolName: string, input: Record<string, unknown>, signal?: AbortSignal, extraAllowedPaths?: string[]): Promise<ToolResult> {
+  async execute(toolName: string, input: Record<string, unknown>, signal?: AbortSignal, extraAllowedPaths?: string[], workingDirOverride?: string): Promise<ToolResult> {
     if (isAggregateTool(toolName)) {
       const resolved = resolveAction(toolName, input)
       if (!resolved) {
@@ -433,7 +438,7 @@ export class FairyDo {
         return this.executeVirtual(virtualHandler, remainingInput, signal)
       }
 
-      return this.invokeBackend(executor as ExecutorName, remainingInput, signal, extraAllowedPaths)
+      return this.invokeBackend(executor as ExecutorName, remainingInput, signal, extraAllowedPaths, workingDirOverride)
     }
 
     const virtualHandler = this.virtualHandlers.get(toolName)
@@ -446,7 +451,7 @@ export class FairyDo {
       return { success: false, error: { code: 'TOOL_NOT_FOUND', message: `工具 "${toolName}" 不存在` } }
     }
 
-    return this.invokeBackend(tool.executor, input, signal, extraAllowedPaths)
+    return this.invokeBackend(tool.executor, input, signal, extraAllowedPaths, workingDirOverride)
   }
 }
 

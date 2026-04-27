@@ -455,61 +455,18 @@ pub async fn check_environment() -> Result<EnvironmentStatus, String> {
 pub struct GpuInfo {
     pub vendor: String,
     pub name: String,
+    pub gpu_type: String,
 }
 
 async fn detect_gpus() -> Vec<GpuInfo> {
     #[cfg(target_os = "windows")]
     {
-        let gpu_check = timeout(Duration::from_secs(10), async {
-            let mut cmd = Command::new("cmd");
-            cmd.args([
-                "/C",
-                "wmic",
-                "path",
-                "win32_videocontroller",
-                "get",
-                "caption",
-                "/format:value",
-            ]);
-            cmd.creation_flags(CREATE_NO_WINDOW);
-            cmd.output().await
-        })
-        .await;
-
         let mut gpus = Vec::new();
-        if let Ok(Ok(output)) = gpu_check {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                let line = line.trim();
-                if let Some(name) = line.strip_prefix("Caption=") {
-                    let name = name.trim();
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let name_lower = name.to_lowercase();
-                    if name_lower.contains("virtual")
-                        || name_lower.contains("remote")
-                        || name_lower.contains("software")
-                        || name_lower.contains("basic render")
-                    {
-                        continue;
-                    }
-                    let vendor = if name_lower.contains("intel") {
-                        "Intel".to_string()
-                    } else if name_lower.contains("nvidia") || name_lower.contains("geforce") {
-                        "NVIDIA".to_string()
-                    } else if name_lower.contains("amd") || name_lower.contains("radeon") {
-                        "AMD".to_string()
-                    } else {
-                        "Unknown".to_string()
-                    };
-                    gpus.push(GpuInfo {
-                        vendor,
-                        name: name.to_string(),
-                    });
-                }
-            }
-        }
+        let mut seen_names = std::collections::HashSet::new();
+
+        detect_gpus_via_nvidia_smi(&mut gpus, &mut seen_names).await;
+        detect_gpus_via_powershell(&mut gpus, &mut seen_names).await;
+
         gpus
     }
     #[cfg(not(target_os = "windows"))]
@@ -518,9 +475,131 @@ async fn detect_gpus() -> Vec<GpuInfo> {
     }
 }
 
+#[cfg(target_os = "windows")]
+async fn detect_gpus_via_nvidia_smi(
+    gpus: &mut Vec<GpuInfo>,
+    seen_names: &mut std::collections::HashSet<String>,
+) {
+    let nvidia_smi_check = timeout(Duration::from_secs(10), async {
+        let mut cmd = Command::new("cmd");
+        cmd.args([
+            "/C",
+            "nvidia-smi",
+            "--query-gpu=name",
+            "--format=csv,noheader",
+        ]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.output().await
+    })
+    .await;
+
+    if let Ok(Ok(output)) = nvidia_smi_check {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let name = line.trim().trim_matches('"').trim();
+                if name.is_empty() || name.starts_with("No devices") {
+                    continue;
+                }
+                let key = name.to_lowercase();
+                if seen_names.insert(key) {
+                    gpus.push(GpuInfo {
+                        vendor: "NVIDIA".to_string(),
+                        name: name.to_string(),
+                        gpu_type: "discrete".to_string(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+async fn detect_gpus_via_powershell(
+    gpus: &mut Vec<GpuInfo>,
+    seen_names: &mut std::collections::HashSet<String>,
+) {
+    let ps_check = timeout(Duration::from_secs(15), async {
+        let mut cmd = Command::new("powershell");
+        cmd.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance -ClassName Win32_VideoController | Select-Object -ExpandProperty Caption",
+        ]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.output().await
+    })
+    .await;
+
+    if let Ok(Ok(output)) = ps_check {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            let name = line.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let name_lower = name.to_lowercase();
+
+            if name_lower.contains("virtual")
+                || name_lower.contains("remote")
+                || name_lower.contains("software")
+                || name_lower.contains("basic render")
+                || name_lower.contains("basic display")
+                || name_lower.contains("microsoft basic")
+                || name_lower.contains("rdp")
+                || name_lower.contains("mirage")
+                || name_lower.contains("teamviewer")
+            {
+                continue;
+            }
+
+            if seen_names.contains(&name_lower) {
+                continue;
+            }
+
+            let vendor = if name_lower.contains("nvidia") || name_lower.contains("geforce") || name_lower.contains("rtx") || name_lower.contains("gtx") {
+                "NVIDIA".to_string()
+            } else if name_lower.contains("amd") || name_lower.contains("radeon") {
+                "AMD".to_string()
+            } else if name_lower.contains("intel") {
+                "Intel".to_string()
+            } else {
+                "Unknown".to_string()
+            };
+
+            let gpu_type = if vendor == "NVIDIA" || vendor == "AMD" {
+                "discrete".to_string()
+            } else if vendor == "Intel" {
+                let is_intel_discrete = name_lower.contains("arc")
+                    || name_lower.contains("a380")
+                    || name_lower.contains("a580")
+                    || name_lower.contains("a770")
+                    || name_lower.contains("a770m")
+                    || name_lower.contains("a750")
+                    || name_lower.contains("a310");
+                if is_intel_discrete {
+                    "discrete".to_string()
+                } else {
+                    "integrated".to_string()
+                }
+            } else {
+                "unknown".to_string()
+            };
+
+            seen_names.insert(name_lower);
+            gpus.push(GpuInfo {
+                vendor,
+                name: name.to_string(),
+                gpu_type,
+            });
+        }
+    }
+}
+
 async fn check_intel_gpu() -> bool {
     let gpus = detect_gpus().await;
-    gpus.iter().any(|g| g.vendor == "Intel")
+    gpus.iter().any(|g| g.vendor == "Intel" && g.gpu_type == "discrete")
 }
 
 #[tauri::command]

@@ -121,7 +121,7 @@ export function assembleMemoryPrompt(smartRecall?: boolean): string {
   }
 }
 
-function assembleEnvironmentPrompt(): string {
+async function assembleEnvironmentPrompt(conversationWorkdir?: string): Promise<string> {
   const now = new Date()
   const timeStr = now.toLocaleString('zh-CN', {
     year: 'numeric',
@@ -144,12 +144,31 @@ function assembleEnvironmentPrompt(): string {
     osInfo = match ? `macOS ${match[1].replace(/_/g, '.')}` : 'macOS'
   } else if (ua.includes('Linux')) osInfo = 'Linux'
 
-  return [
+  let workingDir = ''
+  if (conversationWorkdir) {
+    workingDir = conversationWorkdir
+  } else {
+    try {
+      const { loadMiscSettings, getEffectiveWorkingDir } = await import('../stores/miscSettings.js')
+      const miscSettings = await loadMiscSettings()
+      workingDir = getEffectiveWorkingDir(miscSettings)
+    } catch {}
+  }
+
+  const lines = [
     '## 环境信息',
     '',
     `- 当前时间: ${timeStr}`,
     `- 操作系统: ${osInfo}`,
-  ].join('\n')
+  ]
+  if (workingDir) {
+    const sep = workingDir.includes('/') ? '/' : '\\'
+    lines.push(`- 工作目录: ${workingDir}`)
+    lines.push('')
+    lines.push(`文件操作工具的 path 参数支持相对路径和绝对路径。相对路径会自动解析到工作目录下（如 src${sep}utils.ts 解析为 ${workingDir}${sep}src${sep}utils.ts）。创建文件时优先使用相对路径。绝对路径必须在允许的目录范围内，否则会返回 OUT_OF_WORKDIR 错误。`)
+  }
+
+  return lines.join('\n')
 }
 
 function assembleRoleConfigPrompt(): string {
@@ -202,7 +221,7 @@ async function readOptionalCorefile(fileName: string): Promise<{ content: string
   }
 }
 
-export async function assembleSystemPrompt(skillsPrompt?: string): Promise<string> {
+export async function assembleSystemPrompt(skillsPrompt?: string, conversationWorkdir?: string): Promise<string> {
   const settings = loadSettings()
   const [soulRaw, habitRaw, syspromptRaw, rebirthResult] = await Promise.all([
     readCorefile('SOUL.md', soulFallback),
@@ -235,7 +254,7 @@ export async function assembleSystemPrompt(skillsPrompt?: string): Promise<strin
 
   const roleConfigPrompt = assembleRoleConfigPrompt()
 
-  const environmentPrompt = assembleEnvironmentPrompt()
+  const environmentPrompt = await assembleEnvironmentPrompt(conversationWorkdir)
 
   const fapPrompt = await assembleFapPrompt()
 

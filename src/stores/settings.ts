@@ -1,9 +1,12 @@
+export type ModelType = 'llm' | 'embedding'
+
 export interface ApiProvider {
   id: string
   displayName: string
   baseUrl: string
   apiKey: string
   model: string
+  modelType?: ModelType
   protocol: 'openai' | 'anthropic' | 'google' | 'custom'
   isDefault?: boolean
   thinkingEnabled?: boolean

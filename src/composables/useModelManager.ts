@@ -8,6 +8,7 @@ import { loadSettings, saveSettings } from '../stores/settings'
 interface GpuInfo {
   vendor: string
   name: string
+  gpu_type: string
 }
 
 interface EnvironmentStatus {

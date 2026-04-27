@@ -12,6 +12,42 @@
         />
       </template>
     </div>
+    <div class="info-bar">
+      <div class="info-bar-inner">
+        <div class="info-capsule" :title="`输入: ${promptTokens}  输出: ${completionTokens}`">
+          <svg class="capsule-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="8" cy="8" r="6.5"></circle>
+            <path d="M8 4v4.5l3 1.5"></path>
+          </svg>
+          <span class="capsule-label">Token</span>
+          <span class="capsule-value">{{ totalTokens.toLocaleString() }}</span>
+        </div>
+        <div class="info-capsule" :title="`输入 token 数`">
+          <span class="capsule-label">↑</span>
+          <span class="capsule-value">{{ promptTokens.toLocaleString() }}</span>
+        </div>
+        <div class="info-capsule" :title="`输出 token 数`">
+          <span class="capsule-label">↓</span>
+          <span class="capsule-value">{{ completionTokens.toLocaleString() }}</span>
+        </div>
+        <div class="info-spacer"></div>
+        <div class="info-capsule workdir-capsule" :class="{ 'has-custom': !!conversation.workdir }" :title="conversation.workdir || '点击设置工作目录'" @click="handleSelectWorkdir">
+          <svg class="capsule-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <span class="capsule-value workdir-text" v-if="conversation.workdir">{{ shortWorkdir }}</span>
+          <span class="capsule-label" v-else>默认目录</span>
+        </div>
+        <button class="info-capsule open-dir-capsule" v-if="conversation.workdir" @click.stop="handleOpenWorkdir" title="在文件管理器中打开">
+          <svg class="capsule-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <line x1="10" y1="14" x2="21" y2="3"></line>
+          </svg>
+          <span class="capsule-label">打开</span>
+        </button>
+      </div>
+    </div>
     <div class="input-area">
       <textarea
         v-model="inputText"
@@ -50,6 +86,8 @@ import { ref, computed, nextTick, watch } from 'vue'
 import MessageItem from './MessageItem.vue'
 import type { Conversation } from '../stores/conversation'
 import { getTextFromMessage } from '../stores/conversation'
+import { open } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
 
 const props = defineProps<{
   conversation: Conversation
@@ -65,6 +103,39 @@ const inputText = ref('')
 const messageListRef = ref<HTMLElement | null>(null)
 
 const compressedCount = computed(() => props.conversation.compressedMessageCount ?? 0)
+
+const promptTokens = computed(() => props.conversation.tokenUsage?.prompt_tokens ?? 0)
+const completionTokens = computed(() => props.conversation.tokenUsage?.completion_tokens ?? 0)
+const totalTokens = computed(() => props.conversation.tokenUsage?.total_tokens ?? 0)
+
+const shortWorkdir = computed(() => {
+  const dir = props.conversation.workdir
+  if (!dir) return ''
+  const sep = dir.includes('/') ? '/' : '\\'
+  const parts = dir.split(sep).filter(Boolean)
+  if (parts.length <= 2) return dir
+  return '...' + sep + parts.slice(-2).join(sep)
+})
+
+const handleSelectWorkdir = async () => {
+  try {
+    const selected = await open({ directory: true, multiple: false })
+    if (selected && typeof selected === 'string') {
+      props.conversation.workdir = selected
+    }
+  } catch (error) {
+    console.error('[ChatWindow] 选择工作目录失败:', error)
+  }
+}
+
+const handleOpenWorkdir = async () => {
+  if (!props.conversation.workdir) return
+  try {
+    await invoke('open_folder', { path: props.conversation.workdir })
+  } catch (error) {
+    console.error('[ChatWindow] 打开目录失败:', error)
+  }
+}
 
 const scrollToBottom = () => {
   nextTick(() => {
@@ -231,5 +302,85 @@ const handleKeydown = (e: KeyboardEvent) => {
 .stop-btn:hover {
   transform: scale(1.05);
   box-shadow: 0 6px 20px var(--color-shadow-primary-strong);
+}
+
+.info-bar {
+  padding: 8px 28px;
+  background: linear-gradient(to bottom, transparent, var(--color-surface) 40%);
+  position: relative;
+  z-index: 1;
+}
+
+.info-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.info-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  font-size: 11px;
+  line-height: 1;
+  user-select: none;
+  transition: all 0.2s ease;
+}
+
+.info-capsule:hover {
+  border-color: var(--color-primary-alpha-20);
+  background: var(--color-primary-alpha-08);
+}
+
+.capsule-icon {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.capsule-label {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.capsule-value {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.info-spacer {
+  flex: 1;
+}
+
+.workdir-capsule {
+  cursor: pointer;
+}
+
+.workdir-capsule.has-custom {
+  border-color: var(--color-primary-alpha-20);
+  background: var(--color-primary-alpha-06);
+}
+
+.workdir-text {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.open-dir-capsule {
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  padding: 5px 8px;
+}
+
+.open-dir-capsule:hover {
+  background: var(--color-primary-alpha-08);
 }
 </style>

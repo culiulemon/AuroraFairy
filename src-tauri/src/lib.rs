@@ -258,8 +258,8 @@ async fn shell_execute(command: String, timeout: u64, shell_type: Option<String>
 }
 
 #[tauri::command]
-fn file_read(app: tauri::AppHandle, path: String, offset: Option<usize>, limit: Option<usize>, raw: Option<bool>, extra_allowed_paths: Option<Vec<String>>) -> Result<String, String> {
-    let working_dir = get_working_dir(&app);
+fn file_read(app: tauri::AppHandle, path: String, offset: Option<usize>, limit: Option<usize>, raw: Option<bool>, extra_allowed_paths: Option<Vec<String>>, working_dir_override: Option<String>) -> Result<String, String> {
+    let working_dir = working_dir_override.filter(|d| !d.is_empty()).unwrap_or_else(|| get_working_dir(&app));
     let data_dir = get_data_dir(&app).ok().map(|d| d.to_string_lossy().to_string());
     if raw == Some(true) {
         let safe_path = commands::file::validate_path(&path, &working_dir, data_dir.as_deref(), extra_allowed_paths.as_deref())?;
@@ -271,8 +271,8 @@ fn file_read(app: tauri::AppHandle, path: String, offset: Option<usize>, limit: 
 }
 
 #[tauri::command]
-fn file_write(app: tauri::AppHandle, path: String, content: String, extra_allowed_paths: Option<Vec<String>>) -> Result<(), String> {
-    let working_dir = get_working_dir(&app);
+fn file_write(app: tauri::AppHandle, path: String, content: String, extra_allowed_paths: Option<Vec<String>>, working_dir_override: Option<String>) -> Result<(), String> {
+    let working_dir = working_dir_override.filter(|d| !d.is_empty()).unwrap_or_else(|| get_working_dir(&app));
     let data_dir = get_data_dir(&app).ok().map(|d| d.to_string_lossy().to_string());
     let p = std::path::Path::new(&path);
     let full_path = if p.parent().map_or(true, |parent| parent.as_os_str().is_empty()) {
@@ -286,22 +286,22 @@ fn file_write(app: tauri::AppHandle, path: String, content: String, extra_allowe
 }
 
 #[tauri::command]
-fn file_delete(app: tauri::AppHandle, path: String, extra_allowed_paths: Option<Vec<String>>) -> Result<(), String> {
-    let working_dir = get_working_dir(&app);
+fn file_delete(app: tauri::AppHandle, path: String, extra_allowed_paths: Option<Vec<String>>, working_dir_override: Option<String>) -> Result<(), String> {
+    let working_dir = working_dir_override.filter(|d| !d.is_empty()).unwrap_or_else(|| get_working_dir(&app));
     let data_dir = get_data_dir(&app).ok().map(|d| d.to_string_lossy().to_string());
     commands::file_delete(&path, &working_dir, data_dir.as_deref(), extra_allowed_paths.as_deref())
 }
 
 #[tauri::command]
-fn file_edit(app: tauri::AppHandle, path: String, old_str: String, new_str: String, extra_allowed_paths: Option<Vec<String>>) -> Result<String, String> {
-    let working_dir = get_working_dir(&app);
+fn file_edit(app: tauri::AppHandle, path: String, old_str: String, new_str: String, extra_allowed_paths: Option<Vec<String>>, working_dir_override: Option<String>) -> Result<String, String> {
+    let working_dir = working_dir_override.filter(|d| !d.is_empty()).unwrap_or_else(|| get_working_dir(&app));
     let data_dir = get_data_dir(&app).ok().map(|d| d.to_string_lossy().to_string());
     commands::file_edit(&path, &old_str, &new_str, &working_dir, data_dir.as_deref(), extra_allowed_paths.as_deref())
 }
 
 #[tauri::command]
-fn file_glob(app: tauri::AppHandle, pattern: String) -> Result<Vec<String>, String> {
-    let working_dir = get_working_dir(&app);
+fn file_glob(app: tauri::AppHandle, pattern: String, working_dir_override: Option<String>) -> Result<Vec<String>, String> {
+    let working_dir = working_dir_override.filter(|d| !d.is_empty()).unwrap_or_else(|| get_working_dir(&app));
     let data_dir = get_data_dir(&app).ok().map(|d| d.to_string_lossy().to_string());
     commands::file_glob(&pattern, &working_dir, data_dir.as_deref())
 }
@@ -322,8 +322,8 @@ fn delete_security_rules() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn file_grep(app: tauri::AppHandle, path: String, pattern: String, extra_allowed_paths: Option<Vec<String>>) -> Result<Vec<String>, String> {
-    let working_dir = get_working_dir(&app);
+fn file_grep(app: tauri::AppHandle, path: String, pattern: String, extra_allowed_paths: Option<Vec<String>>, working_dir_override: Option<String>) -> Result<Vec<String>, String> {
+    let working_dir = working_dir_override.filter(|d| !d.is_empty()).unwrap_or_else(|| get_working_dir(&app));
     let data_dir = get_data_dir(&app).ok().map(|d| d.to_string_lossy().to_string());
     commands::file_grep(&path, &pattern, &working_dir, data_dir.as_deref(), extra_allowed_paths.as_deref())
 }

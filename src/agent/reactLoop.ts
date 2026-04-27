@@ -1,6 +1,7 @@
 import type { Tool } from '../types/tool'
 import type { ChatMessage } from '../stores/chat'
 import type { ToolUseBlock } from '../types/message'
+import type { TokenUsage } from '../stores/conversation'
 import { sendChatMessage } from '../stores/chat'
 import { fairyDo, type ToolResult, isOutOfWorkdirError, extractOutOfWorkdirPath } from './fairyDo'
 import { addDebugLog } from '../stores/debugStore'
@@ -9,6 +10,7 @@ import { estimateMessagesTokens } from './tokenEstimator'
 export interface ToolCallMessage {
   role: 'assistant'
   content: string
+  reasoning_content?: string
   tool_calls: Array<{
     id: string
     type: 'function'
@@ -30,11 +32,13 @@ export interface ReActConfig {
   maxIterations?: number
   tools: Tool[]
   extraAllowedPaths?: string[]
+  workingDirOverride?: string
   onTurnStart?: (turnNumber: number) => void
   onChunk?: (chunk: string) => void
   onReasoningChunk?: (reasoning: string) => void
   onToolExecuting?: (toolCallId: string, tool: string, input: Record<string, unknown>) => void
   onToolResult?: (tool: string, result: ToolResult) => void
+  onUsage?: (usage: TokenUsage) => void
   onTurnEnd?: () => void
   onApproveAccess?: (toolName: string, targetPath: string) => Promise<boolean>
   signal?: AbortSignal
@@ -53,11 +57,13 @@ export interface ReActResult {
 }
 
 function formatToolCallsMessage(
-  toolCalls: ToolUseBlock[]
+  toolCalls: ToolUseBlock[],
+  reasoningContent?: string
 ): ToolCallMessage {
   return {
     role: 'assistant',
     content: '',
+    ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
     tool_calls: toolCalls.map(tc => ({
       id: tc.id,
       type: 'function',
@@ -156,6 +162,7 @@ export async function executeReActLoop(
     config.onTurnStart?.(iterationsExecuted)
 
     const turnToolCalls: ToolUseBlock[] = []
+    let turnReasoning = ''
 
     const toolMessages = messages.filter(m => m.role === 'tool')
     if (toolMessages.length > 4) {
@@ -186,6 +193,7 @@ export async function executeReActLoop(
         config.onChunk?.(chunk)
       },
       onReasoningChunk: (reasoning) => {
+        turnReasoning += reasoning
         config.onReasoningChunk?.(reasoning)
       },
       onToolCall: (toolCall) => {
@@ -194,6 +202,10 @@ export async function executeReActLoop(
         console.log('[ReActLoop] 收集到工具调用:', toolCall.name, toolCall.input)
       }
     })
+
+    if (response.usage) {
+      config.onUsage?.(response.usage)
+    }
 
     console.log(`[ReActLoop] 模型响应完成, 本轮工具调用: ${turnToolCalls.length}, 累计: ${allToolCalls.length}`)
     console.log(`[ReActLoop] response.content 长度: ${response.content?.length || 0}, response.toolCalls 数量: ${response.toolCalls?.length || 0}`)
@@ -226,7 +238,7 @@ export async function executeReActLoop(
     console.log(`[ReActLoop] 检测到 ${response.toolCalls.length} 个工具调用`)
     console.log('[ReActLoop] 工具调用详情:', JSON.stringify(response.toolCalls, null, 2))
 
-    messages.push(formatToolCallsMessage(response.toolCalls) as unknown as ChatMessage)
+    messages.push(formatToolCallsMessage(response.toolCalls, turnReasoning || undefined) as unknown as ChatMessage)
 
     for (const toolCall of response.toolCalls) {
       if (config.signal?.aborted) break
@@ -239,7 +251,7 @@ export async function executeReActLoop(
       })
 
       const extraAllowedPaths = approvedPaths.size > 0 ? Array.from(approvedPaths) : undefined
-      const result = await fairyDo.execute(toolCall.name, toolCall.input, config.signal, extraAllowedPaths)
+      const result = await fairyDo.execute(toolCall.name, toolCall.input, config.signal, extraAllowedPaths, config.workingDirOverride)
 
       if (config.signal?.aborted) {
         console.log('[ReActLoop] 工具执行后被中止，跳出循环')
@@ -259,7 +271,7 @@ export async function executeReActLoop(
           if (approved) {
             approvedPaths.add(targetPath)
             addDebugLog('info', '用户授权访问', targetPath, { toolName: toolCall.name })
-            const retryResult = await fairyDo.execute(toolCall.name, toolCall.input, config.signal, Array.from(approvedPaths))
+            const retryResult = await fairyDo.execute(toolCall.name, toolCall.input, config.signal, Array.from(approvedPaths), config.workingDirOverride)
             console.log(`[ReActLoop] 重试工具 ${toolCall.name} 结果:`, JSON.stringify(retryResult, null, 2))
             toolResults.push({
               toolName: toolCall.name,

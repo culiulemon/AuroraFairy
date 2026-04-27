@@ -35,6 +35,7 @@
             <div class="provider-id">{{ provider.id }}</div>
             <div class="provider-url">{{ provider.baseUrl }}</div>
             <div class="provider-model" v-if="provider.model">{{ provider.model }}</div>
+            <span v-if="(provider.modelType ?? 'llm') === 'embedding'" class="model-type-badge embedding">嵌入模型</span>
           </div>
           <div class="provider-actions">
             <button 
@@ -117,6 +118,15 @@
       </div>
 
       <div class="form-group">
+        <label>模型类型</label>
+        <BaseSelect
+          :modelValue="formData.modelType ?? null"
+          :options="modelTypeSelectOptions"
+          @update:modelValue="formData.modelType = ($event as ModelType) ?? 'llm'"
+        />
+      </div>
+
+      <div class="form-group">
         <label>Base URL</label>
         <input
           v-model="formData.baseUrl"
@@ -174,30 +184,32 @@
         />
       </div>
 
-      <div class="form-group toggle-group">
+      <div class="form-group toggle-group" :class="{ disabled: isEmbeddingModel }">
         <label>深度思考</label>
         <div class="toggle-wrapper">
           <input
             type="checkbox"
             v-model="formData.thinkingEnabled"
             class="toggle-input"
+            :disabled="isEmbeddingModel"
           />
-          <div class="toggle-slider" @click="formData.thinkingEnabled = !formData.thinkingEnabled"></div>
+          <div class="toggle-slider" :class="{ disabled: isEmbeddingModel }" @click="!isEmbeddingModel && (formData.thinkingEnabled = !formData.thinkingEnabled)"></div>
         </div>
-        <span class="toggle-hint">启用后模型将输出推理过程（仅 OpenAI/custom 协议支持）</span>
+        <span class="toggle-hint">启用后模型将输出推理过程（仅 OpenAI/custom 协议支持）<template v-if="isEmbeddingModel">，嵌入模型不支持</template></span>
       </div>
 
-      <div class="form-group toggle-group">
+      <div class="form-group toggle-group" :class="{ disabled: isEmbeddingModel }">
         <label>支持工具调用</label>
         <div class="toggle-wrapper">
           <input
             type="checkbox"
             v-model="formData.supportsTools"
             class="toggle-input"
+            :disabled="isEmbeddingModel"
           />
-          <div class="toggle-slider" @click="formData.supportsTools = !formData.supportsTools"></div>
+          <div class="toggle-slider" :class="{ disabled: isEmbeddingModel }" @click="!isEmbeddingModel && (formData.supportsTools = !formData.supportsTools)"></div>
         </div>
-        <span class="toggle-hint">关闭后向模型发送请求时不携带 tools 参数</span>
+        <span class="toggle-hint">关闭后向模型发送请求时不携带 tools 参数<template v-if="isEmbeddingModel">，嵌入模型不支持</template></span>
       </div>
       <template #actions>
         <button class="cancel-btn" @click="closeForm">取消</button>
@@ -210,12 +222,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import BaseDialog from './BaseDialog.vue'
 import BaseSelect from './BaseSelect.vue'
 import type { SelectOption } from './BaseSelect.vue'
 import {
   ApiProvider,
+  ModelType,
   loadSettings,
   saveSettings,
   protocolOptions,
@@ -242,14 +255,29 @@ const protocolSelectOptions = computed<SelectOption[]>(() =>
   protocolOptions.map(o => ({ value: o.value, label: o.label }))
 )
 
+const modelTypeSelectOptions = computed<SelectOption[]>(() => [
+  { value: 'llm', label: '大语言模型' },
+  { value: 'embedding', label: '嵌入模型' }
+])
+
 const formData = reactive<ApiProvider>({
   id: '',
   displayName: '',
   baseUrl: '',
   apiKey: '',
   model: '',
+  modelType: 'llm',
   protocol: 'openai',
   supportsTools: true
+})
+
+const isEmbeddingModel = computed(() => (formData.modelType ?? 'llm') === 'embedding')
+
+watch(() => formData.modelType, (val) => {
+  if (val === 'embedding') {
+    formData.thinkingEnabled = false
+    formData.supportsTools = false
+  }
 })
 
 const canSave = computed(() => {
@@ -283,6 +311,7 @@ const handleAddProvider = () => {
     baseUrl: '',
     apiKey: '',
     model: '',
+    modelType: 'llm',
     protocol: 'openai',
     thinkingEnabled: false,
     supportsTools: true
@@ -293,7 +322,7 @@ const handleAddProvider = () => {
 }
 
 const handleEditProvider = (provider: ApiProvider) => {
-  Object.assign(formData, { ...provider })
+  Object.assign(formData, { ...provider, modelType: provider.modelType ?? 'llm' })
   editingProvider.value = provider
   idError.value = ''
   showForm.value = true
@@ -587,6 +616,20 @@ async function testConnection(provider: ApiProvider) {
   font-size: 12px;
   color: var(--color-primary);
   margin-top: 2px;
+}
+
+.model-type-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.model-type-badge.embedding {
+  background: rgba(155, 89, 182, 0.12);
+  color: #9B59B6;
 }
 
 .provider-actions {
@@ -918,5 +961,14 @@ async function testConnection(provider: ApiProvider) {
   font-size: 11px;
   color: var(--color-text-muted);
   margin-top: 0;
+}
+
+.toggle-group.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.toggle-slider.disabled {
+  cursor: not-allowed;
 }
 </style>

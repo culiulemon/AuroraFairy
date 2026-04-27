@@ -31,6 +31,12 @@ export interface Message {
   memoryConsolidated?: boolean
 }
 
+export interface TokenUsage {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+}
+
 export interface Conversation {
   id: string
   title: string
@@ -45,6 +51,8 @@ export interface Conversation {
   summary?: string
   summaryUpdatedAt?: string
   compressedMessageCount?: number
+  tokenUsage?: TokenUsage
+  workdir?: string
 }
 
 export interface Attachment {

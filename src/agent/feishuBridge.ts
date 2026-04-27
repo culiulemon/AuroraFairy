@@ -197,7 +197,7 @@ export class FeishuChannelBridge implements ChannelBridge {
           summaryUpdatedAt: conv.summaryUpdatedAt,
         }),
         generateTitleIfNeeded: () => {},
-        getConversationMessages: () => store.getSimpleMessages(conv.id) as Array<{ role: 'user' | 'assistant'; content: string }>,
+        getConversationMessages: () => store.getSimpleMessages(conv.id) as Array<{ role: 'user' | 'assistant'; content: string; reasoning_content?: string }>,
       }
 
       try {

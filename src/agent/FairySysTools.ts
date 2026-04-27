@@ -36,7 +36,7 @@ export const sysTools: Tool[] = [
     filePath: '',
     parameters: [
       { name: 'action', type: 'string', description: '操作类型: read|write|edit|delete|glob|grep', required: true },
-      { name: 'path', type: 'string', description: '文件路径（read/write/edit/delete/grep 需要）', required: false },
+      { name: 'path', type: 'string', description: '文件路径。支持相对路径（推荐，自动解析到工作目录，如 src/utils.ts）和绝对路径（必须在允许的目录范围内，否则返回 OUT_OF_WORKDIR 错误）。创建文件时优先使用相对路径。', required: false },
       { name: 'pattern', type: 'string', description: '搜索模式（glob 的通配符模式或 grep 的正则表达式）', required: false },
       { name: 'offset', type: 'integer', description: '起始行号，从 1 开始（action=read 时可选）', required: false },
       { name: 'limit', type: 'integer', description: '读取的最大行数（action=read 时可选）', required: false },

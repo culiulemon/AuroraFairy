@@ -113,6 +113,7 @@ export interface DispatcherCallbacks {
   onReasoningChunk: (reasoning: string) => void
   onToolExecuting: (toolCallId: string, tool: string, input: Record<string, unknown>) => void
   onToolResult: (tool: string, result: unknown) => void
+  onUsage?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => void
   onTurnStart: () => void
   onTurnEnd: (messageId: string) => void
   onApproveAccess: (toolName: string, targetPath: string) => Promise<boolean>
@@ -130,16 +131,17 @@ export interface DispatcherDeps {
     messages: Array<{
       id: string
       role: string
-      content: Array<{ type: string; text?: string }>
+      content: Array<{ type: string; text?: string; reasoning?: string }>
       isLoading?: boolean
       isGreeting?: boolean
       timestamp?: string | number
     }>
     summary?: string
     summaryUpdatedAt?: string
+    workdir?: string
   } | null
   addMessage: (convId: string, role: 'user' | 'assistant', content: Array<{ type: string; text: string }>) => void
-  getConversationMessages: (convId: string) => Array<{ role: 'user' | 'assistant'; content: string }>
+  getConversationMessages: (convId: string) => Array<{ role: 'user' | 'assistant'; content: string; reasoning_content?: string }>
   generateTitleIfNeeded: (providerId: string, userMessage: string, convId: string, currentTitle: string) => void
   fbmStore: {
     isEnabled(): boolean
@@ -183,10 +185,18 @@ export async function dispatchMessage(
 
   const messages = conv.messages
     .filter(m => !m.isLoading && !m.isGreeting)
-    .map(m => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join('')
-    }))
+    .map(m => {
+      const text = m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join('')
+      const reasoning = m.content
+        .filter(c => c.type === 'text' && c.reasoning)
+        .map(c => c.reasoning || '')
+        .join('')
+      return {
+        role: m.role as 'user' | 'assistant',
+        content: text,
+        ...(reasoning && m.role === 'assistant' ? { reasoning_content: reasoning } : {})
+      }
+    })
 
   const recentMessages = messages.slice(-6)
   const conversationContext = recentMessages
@@ -281,7 +291,7 @@ export async function dispatchMessage(
 
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-  const systemPrompt = await assembleSystemPrompt(skillsPrompt)
+  const systemPrompt = await assembleSystemPrompt(skillsPrompt, conv.workdir)
 
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
@@ -321,6 +331,7 @@ export async function dispatchMessage(
     const result = await executeReActLoop(provider.id, llmMessages, {
       tools: allTools,
       extraAllowedPaths: writableSkillDirs.length > 0 ? writableSkillDirs : undefined,
+      workingDirOverride: conv.workdir,
       signal,
       onApproveAccess: callbacks.onApproveAccess,
       onTurnStart: () => {
@@ -337,6 +348,9 @@ export async function dispatchMessage(
       },
       onToolResult: (tool, result) => {
         callbacks.onToolResult(tool, result)
+      },
+      onUsage: (usage) => {
+        callbacks.onUsage?.(usage)
       },
       onTurnEnd: () => {
         callbacks.onTurnEnd('')

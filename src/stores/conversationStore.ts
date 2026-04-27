@@ -282,11 +282,19 @@ export function setMessageError(
   }
 }
 
-export function toSimpleMessages(messages: Message[]): Array<{ role: string; content: string }> {
+export function toSimpleMessages(messages: Message[]): Array<{ role: string; content: string; reasoning_content?: string }> {
   return messages
     .filter(m => !m.isLoading)
-    .map(m => ({
-      role: m.role,
-      content: getTextFromMessage(m)
-    }))
+    .map(m => {
+      const text = getTextFromMessage(m)
+      const reasoning = m.content
+        .filter(c => c.type === 'text' && c.reasoning)
+        .map(c => c.reasoning || '')
+        .join('')
+      return {
+        role: m.role,
+        content: text,
+        ...(reasoning && m.role === 'assistant' ? { reasoning_content: reasoning } : {})
+      }
+    })
 }

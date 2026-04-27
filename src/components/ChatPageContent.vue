@@ -169,6 +169,7 @@ const handleSendMessage = async (content: string) => {
 
   abortController = new AbortController()
   isGenerating.value = true
+  activeConversation.value.tokenUsage = undefined
 
   setCurrentUserMessage(content)
   addMessage(activeConversation.value.id, 'user', [createTextContent(content)])
@@ -195,10 +196,18 @@ const handleSendMessage = async (content: string) => {
         if (!conv) return []
         return conv.messages
           .filter(m => !m.isLoading && !m.isGreeting)
-          .map(m => ({
-            role: m.role as 'user' | 'assistant',
-            content: m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join('')
-          }))
+          .map(m => {
+            const text = m.content.filter(c => c.type === 'text' && c.text).map(c => c.text || '').join('')
+            const reasoning = m.content
+              .filter(c => c.type === 'text' && c.reasoning)
+              .map(c => c.reasoning || '')
+              .join('')
+            return {
+              role: m.role as 'user' | 'assistant',
+              content: text,
+              ...(reasoning && m.role === 'assistant' ? { reasoning_content: reasoning } : {})
+            }
+          })
       },
       generateTitleIfNeeded: (providerId, userMsg, convId, currentTitle) => {
         if (currentTitle === '新会话') {
@@ -360,6 +369,11 @@ const handleSendMessage = async (content: string) => {
       onContextCompressed: (_convId, compressedCount) => {
         if (activeConversation.value) {
           activeConversation.value.compressedMessageCount = compressedCount
+        }
+      },
+      onUsage: (usage) => {
+        if (activeConversation.value) {
+          activeConversation.value.tokenUsage = usage
         }
       },
     }, abortController.signal)

@@ -2,10 +2,16 @@ import { estimateTokens, estimateMessagesTokens } from './tokenEstimator'
 import { generateSummary } from './conversationSummarizer'
 import { loadSettings } from '../stores/settings'
 
+export interface ContextMessage {
+  role: 'user' | 'assistant'
+  content: string
+  reasoning_content?: string
+}
+
 export interface ContextBuildOptions {
   systemPrompt: string
   memoryContext: string
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  messages: ContextMessage[]
   conversationSummary?: string
   conversationSummaryUpdatedAt?: string
   conversationId: string
@@ -13,7 +19,7 @@ export interface ContextBuildOptions {
 }
 
 export interface ContextBuildResult {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string; reasoning_content?: string }>
   needsSummaryUpdate: boolean
   oldMessagesForSummary: Array<{ role: string; content: string }>
   compressedCount: number
@@ -77,7 +83,7 @@ export async function buildContextMessages(opts: ContextBuildOptions): Promise<C
     }
   }
 
-  const recentMessages: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  const recentMessages: ContextMessage[] = []
   let roundCount = 0
   for (let i = opts.messages.length - 1; i >= 0; i--) {
     if (opts.messages[i].role === 'user') roundCount++
