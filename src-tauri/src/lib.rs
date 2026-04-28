@@ -253,13 +253,18 @@ fn open_folder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn shell_execute(command: String, timeout: u64, shell_type: Option<String>) -> Result<String, String> {
-    commands::shell_execute(command, timeout, shell_type).await
+async fn shell_execute(app: tauri::AppHandle, command: String, timeout: u64, shell_type: Option<String>, working_dir_override: Option<String>) -> Result<String, String> {
+    let override_debug = working_dir_override.clone();
+    let working_dir = working_dir_override.filter(|d| !d.is_empty()).unwrap_or_else(|| get_working_dir(&app));
+    println!("[shell_execute] working_dir_override={:?}, resolved_working_dir={}", override_debug, working_dir);
+    commands::shell_execute(command, timeout, shell_type, Some(working_dir)).await
 }
 
 #[tauri::command]
 fn file_read(app: tauri::AppHandle, path: String, offset: Option<usize>, limit: Option<usize>, raw: Option<bool>, extra_allowed_paths: Option<Vec<String>>, working_dir_override: Option<String>) -> Result<String, String> {
+    let override_debug = working_dir_override.clone();
     let working_dir = working_dir_override.filter(|d| !d.is_empty()).unwrap_or_else(|| get_working_dir(&app));
+    println!("[file_read] path={}, working_dir_override={:?}, resolved_working_dir={}", path, override_debug, working_dir);
     let data_dir = get_data_dir(&app).ok().map(|d| d.to_string_lossy().to_string());
     if raw == Some(true) {
         let safe_path = commands::file::validate_path(&path, &working_dir, data_dir.as_deref(), extra_allowed_paths.as_deref())?;
@@ -272,16 +277,24 @@ fn file_read(app: tauri::AppHandle, path: String, offset: Option<usize>, limit: 
 
 #[tauri::command]
 fn file_write(app: tauri::AppHandle, path: String, content: String, extra_allowed_paths: Option<Vec<String>>, working_dir_override: Option<String>) -> Result<(), String> {
+    let has_override = working_dir_override.as_ref().map_or(false, |d| !d.is_empty());
+    let override_debug = working_dir_override.clone();
     let working_dir = working_dir_override.filter(|d| !d.is_empty()).unwrap_or_else(|| get_working_dir(&app));
+    println!("[file_write] path={}, working_dir_override={:?}, has_override={}, resolved_working_dir={}", path, override_debug, has_override, working_dir);
     let data_dir = get_data_dir(&app).ok().map(|d| d.to_string_lossy().to_string());
     let p = std::path::Path::new(&path);
     let full_path = if p.parent().map_or(true, |parent| parent.as_os_str().is_empty()) {
-        let fairy_workspace = get_fairy_workspace_path_internal(&app)?;
-        fairy_workspace.join(&path)
+        if has_override {
+            std::path::Path::new(&working_dir).join(&path)
+        } else {
+            let fairy_workspace = get_fairy_workspace_path_internal(&app)?;
+            fairy_workspace.join(&path)
+        }
     } else {
         std::path::Path::new(&working_dir).join(&path)
     };
     let full_path_str = full_path.to_string_lossy().to_string();
+    println!("[file_write] full_path={}", full_path_str);
     commands::file_write(&full_path_str, &content, &working_dir, data_dir.as_deref(), extra_allowed_paths.as_deref())
 }
 

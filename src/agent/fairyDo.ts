@@ -351,6 +351,14 @@ export class FairyDo {
       invokeInput['workingDirOverride'] = workingDirOverride
     }
 
+    if (executor === 'shell_execute' && workingDirOverride) {
+      invokeInput['workingDirOverride'] = workingDirOverride
+    }
+
+    if ((executor.startsWith('file_') || executor === 'shell_execute') && workingDirOverride) {
+      console.log(`[FairyDo] ${executor} with workingDirOverride=${workingDirOverride}, invokeInput=`, JSON.stringify(invokeInput))
+    }
+
     const timeoutMs = this.getTimeout(executor)
 
     if (executor === 'shell_execute' && !('timeout' in invokeInput)) {

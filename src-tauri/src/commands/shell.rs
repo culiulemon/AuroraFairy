@@ -150,7 +150,7 @@ fn write_temp_bat(command: &str) -> Result<std::path::PathBuf, String> {
     Ok(bat_path)
 }
 
-pub async fn shell_execute(command: String, timeout_secs: u64, shell_type: Option<String>) -> Result<String, String> {
+pub async fn shell_execute(command: String, timeout_secs: u64, shell_type: Option<String>, working_dir_override: Option<String>) -> Result<String, String> {
     if command.trim().is_empty() {
         return Err("命令不能为空".to_string());
     }
@@ -172,6 +172,12 @@ pub async fn shell_execute(command: String, timeout_secs: u64, shell_type: Optio
     let mut cmd = Command::new(&shell_parts[0]);
     for arg in shell_parts.iter().skip(1) {
         cmd.arg(arg);
+    }
+
+    if let Some(ref dir) = working_dir_override {
+        if std::path::Path::new(dir).is_dir() {
+            cmd.current_dir(dir);
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -232,13 +238,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_blocked_commands() {
-        assert!(shell_execute("rm -rf /".to_string(), 1, None).await.is_err());
-        assert!(shell_execute("mkfs".to_string(), 1, None).await.is_err());
+        assert!(shell_execute("rm -rf /".to_string(), 1, None, None).await.is_err());
+        assert!(shell_execute("mkfs".to_string(), 1, None, None).await.is_err());
     }
 
     #[tokio::test]
     async fn test_valid_command() {
-        let result = shell_execute("echo hello".to_string(), 5, None).await;
+        let result = shell_execute("echo hello".to_string(), 5, None, None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().contains("hello"));
     }

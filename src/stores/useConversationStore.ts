@@ -217,6 +217,14 @@ function updateConversationTitle(conversationId: string, title: string): void {
   debouncedSave(conversation)
 }
 
+function updateConversationWorkdir(conversationId: string, workdir: string | undefined): void {
+  const conversation = conversations.value.find(c => c.id === conversationId)
+  if (!conversation) return
+
+  conversation.workdir = workdir
+  debouncedSave(conversation)
+}
+
 function markMessagesConsolidated(conversationId: string): void {
   const conversation = conversations.value.find(c => c.id === conversationId)
   if (!conversation) return
@@ -299,6 +307,7 @@ export function useConversationStore() {
     addToolResultToMessage,
     markMessagesConsolidated,
     updateConversationTitle,
+    updateConversationWorkdir,
     findOrCreateByExternalChatId,
     createNewExternalConversation
   }

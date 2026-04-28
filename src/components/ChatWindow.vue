@@ -88,6 +88,7 @@ import type { Conversation } from '../stores/conversation'
 import { getTextFromMessage } from '../stores/conversation'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
+import { useConversationStore } from '../stores/useConversationStore'
 
 const props = defineProps<{
   conversation: Conversation
@@ -121,7 +122,8 @@ const handleSelectWorkdir = async () => {
   try {
     const selected = await open({ directory: true, multiple: false })
     if (selected && typeof selected === 'string') {
-      props.conversation.workdir = selected
+      const { updateConversationWorkdir } = useConversationStore()
+      updateConversationWorkdir(props.conversation.id, selected)
     }
   } catch (error) {
     console.error('[ChatWindow] 选择工作目录失败:', error)

@@ -76,11 +76,34 @@ fn get_models_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> 
 }
 
 fn find_script(app: &tauri::AppHandle, script_name: &str) -> Result<std::path::PathBuf, String> {
+    if let Ok(script) = app.path().resolve(
+        std::path::Path::new("../scripts").join(script_name),
+        tauri::path::BaseDirectory::Resource,
+    ) {
+        if script.exists() {
+            eprintln!("[Scripts] Found {} via resolve: {:?}", script_name, script);
+            return Ok(script);
+        }
+        eprintln!("[Scripts] resolve path not found at: {:?}", script);
+    } else {
+        eprintln!("[Scripts] resolve() failed for {}", script_name);
+    }
+
     if let Ok(resource_dir) = app.path().resource_dir() {
         let script = resource_dir.join("scripts").join(script_name);
         if script.exists() {
+            eprintln!("[Scripts] Found {} via resource_dir/scripts: {:?}", script_name, script);
             return Ok(script);
         }
+        eprintln!("[Scripts] resource_dir/scripts not found at: {:?}", script);
+        let script_up = resource_dir.join("_up_").join("scripts").join(script_name);
+        if script_up.exists() {
+            eprintln!("[Scripts] Found {} via resource_dir/_up_/scripts: {:?}", script_name, script_up);
+            return Ok(script_up);
+        }
+        eprintln!("[Scripts] resource_dir/_up_/scripts not found at: {:?}", script_up);
+    } else {
+        eprintln!("[Scripts] Failed to get resource_dir");
     }
 
     let exe_dir = std::env::current_exe()
@@ -91,14 +114,31 @@ fn find_script(app: &tauri::AppHandle, script_name: &str) -> Result<std::path::P
 
     let script = exe_dir.join("scripts").join(script_name);
     if script.exists() {
+        eprintln!("[Scripts] Found {} via exe_dir/scripts: {:?}", script_name, script);
         return Ok(script);
+    }
+    eprintln!("[Scripts] exe_dir/scripts not found at: {:?}", script);
+
+    let dev_fallback = exe_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .map(|p| p.join("scripts").join(script_name));
+    if let Some(ref fallback) = dev_fallback {
+        if fallback.exists() {
+            eprintln!("[Scripts] Found {} via dev_fallback: {:?}", script_name, fallback);
+            return Ok(fallback.clone());
+        }
+        eprintln!("[Scripts] dev_fallback not found at: {:?}", fallback);
     }
 
     if let Ok(project_root) = crate::get_project_root() {
         let script = project_root.join("scripts").join(script_name);
         if script.exists() {
+            eprintln!("[Scripts] Found {} via project_root: {:?}", script_name, script);
             return Ok(script);
         }
+        eprintln!("[Scripts] project_root not found at: {:?}", script);
     }
 
     Err(format!("脚本不存在: {}", script_name))
@@ -624,11 +664,85 @@ async fn check_intel_gpu() -> bool {
     gpus.iter().any(|g| g.vendor == "Intel" && g.gpu_type == "discrete")
 }
 
+fn decode_cmd_output(raw: &[u8]) -> String {
+    if raw.is_empty() {
+        return String::new();
+    }
+    if let Ok(s) = String::from_utf8(raw.to_vec()) {
+        return s;
+    }
+    let (cow, _encoding, _had_errors) = encoding_rs::GBK.decode(raw);
+    cow.into_owned()
+}
+
+fn interpret_pip_error(stderr: &str, package: &str) -> String {
+    let lower = stderr.to_lowercase();
+    if lower.contains("'pip'") && (lower.contains("not recognized") || lower.contains("不是内部或外部命令") || lower.contains("找不到") || lower.contains("不是可运行的")) {
+        return "找不到 pip 命令。请确认 Python 已正确安装并勾选了 'Add Python to PATH' 选项，然后重启电脑再试。\n也可以在命令行中运行 'python -m ensurepip' 来安装 pip。".to_string();
+    }
+    if lower.contains("'python'") && (lower.contains("not recognized") || lower.contains("不是内部或外部命令") || lower.contains("找不到") || lower.contains("不是可运行的")) {
+        return "找不到 Python 命令。请先安装 Python（推荐 3.10+），安装时务必勾选 'Add Python to PATH'，然后重启电脑再试。\n下载地址: https://www.python.org/downloads/".to_string();
+    }
+    if lower.contains("no module named pip") {
+        return "Python 环境中缺少 pip 模块。请在命令行中运行 'python -m ensurepip' 来安装 pip，然后重试。".to_string();
+    }
+    if lower.contains("permissionerror") || lower.contains("permission denied") || lower.contains("访问被拒绝") {
+        return format!("权限不足，无法安装 {}。请尝试以管理员身份运行本应用，或使用 'python -m pip install {} --user' 进行用户级安装。", package, package);
+    }
+    if lower.contains("network") || lower.contains("timeout") || lower.contains("connectionerror") || lower.contains("连接超时") || lower.contains("网络") {
+        return format!("网络连接失败，无法下载 {}。请检查网络连接后重试。如果使用代理，请确保代理配置正确。", package);
+    }
+    if lower.contains("nomatch") || lower.contains("no matching distribution") || lower.contains("找不到") && lower.contains("distribution") {
+        return format!("找不到 {} 的可用安装包。可能是 Python 版本不兼容，请确认使用 Python 3.8 或更高版本。", package);
+    }
+    if !stderr.trim().is_empty() {
+        let trimmed = stderr.trim();
+        if trimmed.len() > 300 {
+            return format!("安装失败，错误信息:\n...{}", &trimmed[trimmed.len() - 300..]);
+        }
+        return format!("安装失败，错误信息:\n{}", trimmed);
+    }
+    format!("{} 安装失败，未知错误。请检查 Python 环境是否正常。", package)
+}
+
 #[tauri::command]
 pub async fn install_dependency(
     app: tauri::AppHandle,
     package: String,
 ) -> Result<(), String> {
+    if package != "oneapi" {
+        let python_check = Command::new("cmd")
+            .args(["/C", "python", "--version"])
+            .output()
+            .await;
+        match python_check {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => {
+                let stderr = decode_cmd_output(&output.stderr);
+                let msg = if stderr.trim().is_empty() {
+                    "Python 环境异常，命令执行失败。请确认 Python 已正确安装并勾选了 'Add Python to PATH' 选项，然后重启电脑再试。\n下载地址: https://www.python.org/downloads/".to_string()
+                } else {
+                    interpret_pip_error(&stderr, &package)
+                };
+                let progress = InstallProgress {
+                    status: "error".to_string(),
+                    message: msg.clone(),
+                };
+                let _ = app.emit("dependency-install-progress", progress);
+                return Err(msg);
+            }
+            Err(_) => {
+                let msg = "找不到 Python 命令。请先安装 Python（推荐 3.10+），安装时务必勾选 'Add Python to PATH'，然后重启电脑再试。\n下载地址: https://www.python.org/downloads/".to_string();
+                let progress = InstallProgress {
+                    status: "error".to_string(),
+                    message: msg.clone(),
+                };
+                let _ = app.emit("dependency-install-progress", progress);
+                return Err(msg);
+            }
+        }
+    }
+
     let progress = InstallProgress {
         status: "installing".to_string(),
         message: format!("正在安装 {}...", package),
@@ -728,11 +842,13 @@ pub async fn install_dependency(
             };
             let _ = app.emit("dependency-install-progress", progress2);
             let _ = Command::new("cmd")
-                .args(["/C", "pip", "uninstall", "llama-cpp-python", "-y"])
+                .args(["/C", "python", "-m", "pip", "uninstall", "llama-cpp-python", "-y"])
                 .output()
                 .await;
             cmd.args([
                 "/C",
+                "python",
+                "-m",
                 "pip",
                 "install",
                 &install_file.to_string_lossy(),
@@ -740,7 +856,7 @@ pub async fn install_dependency(
         } else if has_intel_gpu && !has_oneapi {
             return Err("检测到 Intel GPU 但未安装 Intel oneAPI。请先安装 oneAPI（点击上方 oneAPI 的下载按钮），然后再安装 llama.cpp。".to_string());
         } else {
-            cmd.args(["/C", "pip", "install", &package]);
+            cmd.args(["/C", "python", "-m", "pip", "install", &package]);
         }
     } else if package == "transformers" {
         let torch_check = Command::new("cmd")
@@ -763,9 +879,9 @@ pub async fn install_dependency(
             let has_intel_gpu = check_intel_gpu().await;
             let mut torch_cmd = Command::new("cmd");
             if has_intel_gpu {
-                torch_cmd.args(["/C", "pip", "install", "torch", "--index-url", "https://pytorch-extension.intel.com/whl/xpu"]);
+                torch_cmd.args(["/C", "python", "-m", "pip", "install", "torch", "--index-url", "https://pytorch-extension.intel.com/whl/xpu"]);
             } else {
-                torch_cmd.args(["/C", "pip", "install", "torch"]);
+                torch_cmd.args(["/C", "python", "-m", "pip", "install", "torch"]);
             }
             let _ = torch_cmd.output().await;
         }
@@ -775,9 +891,9 @@ pub async fn install_dependency(
             message: "正在安装 Transformers...".to_string(),
         };
         let _ = app.emit("dependency-install-progress", progress2);
-        cmd.args(["/C", "pip", "install", "transformers"]);
+        cmd.args(["/C", "python", "-m", "pip", "install", "transformers"]);
     } else {
-        cmd.args(["/C", "pip", "install", &package]);
+        cmd.args(["/C", "python", "-m", "pip", "install", &package]);
     }
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
@@ -796,21 +912,23 @@ pub async fn install_dependency(
             Ok(())
         }
         Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let stderr = decode_cmd_output(&output.stderr);
+            let msg = interpret_pip_error(&stderr, &package);
             let progress = InstallProgress {
                 status: "error".to_string(),
-                message: format!("{} 安装失败: {}", package, stderr),
+                message: msg.clone(),
             };
             let _ = app.emit("dependency-install-progress", progress);
-            Err(format!("安装失败: {}", stderr))
+            Err(msg)
         }
         Err(e) => {
+            let msg = format!("安装进程启动失败: {}。请检查 Python 环境是否正常。", e);
             let progress = InstallProgress {
                 status: "error".to_string(),
-                message: format!("安装进程异常: {}", e),
+                message: msg.clone(),
             };
             let _ = app.emit("dependency-install-progress", progress);
-            Err(format!("安装进程启动失败: {}", e))
+            Err(msg)
         }
     }
 }
@@ -931,15 +1049,25 @@ pub async fn download_model(
 
     let script_str = script_path.to_string_lossy().to_string();
     let local_dir_str = abs_local_dir.to_string_lossy().to_string();
+    let stderr_file_path = models_dir.join(format!(
+        ".download_stderr_{}.log",
+        model_id.replace('/', "_")
+    ));
+    let stderr_file = std::fs::File::create(&stderr_file_path)
+        .map_err(|e| format!("无法创建 stderr 日志文件: {}", e))?;
+    let stderr_file_str = stderr_file_path.to_string_lossy().to_string();
+    #[cfg(target_os = "windows")]
+    let mut cmd = Command::new("cmd");
+    #[cfg(target_os = "windows")]
+    cmd.args(["/C", "python"]);
+    #[cfg(target_os = "windows")]
+    cmd.args([&script_str, &model_id, &local_dir_str, &progress_file_str]);
+    #[cfg(not(target_os = "windows"))]
     let mut cmd = Command::new("python");
-    cmd.args([
-        script_str.as_str(),
-        model_id.as_str(),
-        local_dir_str.as_str(),
-        progress_file_str.as_str(),
-    ])
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null());
+    #[cfg(not(target_os = "windows"))]
+    cmd.args([&script_str, &model_id, &local_dir_str, &progress_file_str]);
+    cmd.stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::from(stderr_file));
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
     let child = cmd
@@ -1016,6 +1144,7 @@ pub async fn download_model(
 
                         if status == "completed" || status == "error" {
                             let _ = fs::remove_file(&progress_file_str);
+                            let _ = fs::remove_file(&stderr_file_str);
                             break;
                         }
                         last_status = status;
@@ -1029,12 +1158,22 @@ pub async fn download_model(
             if process_exited && last_status != "completed" && last_status != "error" {
                 cleanup_modelscope_lock(&model_id_clone);
                 let _ = fs::remove_file(&progress_file_str);
+                let stderr_content = fs::read_to_string(&stderr_file_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                let _ = fs::remove_file(&stderr_file_str);
+                let msg = if stderr_content.is_empty() {
+                    "下载进程异常退出，请检查 Python 和 ModelScope 是否已安装".to_string()
+                } else {
+                    format!("下载进程异常退出: {}", stderr_content)
+                };
                 let progress = DownloadProgress {
                     model_id: model_id_clone.clone(),
                     status: "error".to_string(),
                     current_file: String::new(),
                     progress_percent: 0.0,
-                    message: "下载进程异常退出，请检查 Python 和 ModelScope 是否已安装".to_string(),
+                    message: msg,
                 };
                 let _ = app_clone.emit("model-download-progress", progress);
                 let mut map = processes_clone.lock().await;
@@ -1045,6 +1184,7 @@ pub async fn download_model(
             if no_progress_ticks > 120 {
                 cleanup_modelscope_lock(&model_id_clone);
                 let _ = fs::remove_file(&progress_file_str);
+                let _ = fs::remove_file(&stderr_file_str);
                 let progress = DownloadProgress {
                     model_id: model_id_clone.clone(),
                     status: "error".to_string(),
@@ -1064,6 +1204,7 @@ pub async fn download_model(
         if cancelled {
             cleanup_modelscope_lock(&model_id_clone);
             let _ = fs::remove_file(&progress_file_str);
+            let _ = fs::remove_file(&stderr_file_str);
 
             let mut map = processes_clone.lock().await;
             if let Some(mut child) = map.remove(&model_id_clone) {
@@ -1120,6 +1261,7 @@ pub async fn download_model(
         }
 
         let _ = fs::remove_file(&progress_file_str);
+        let _ = fs::remove_file(&stderr_file_str);
     });
 
     Ok(local_dir)
@@ -1160,7 +1302,12 @@ pub async fn cancel_download(app: tauri::AppHandle, model_id: String) -> Result<
         ".download_progress_{}.json",
         model_id.replace('/', "_")
     ));
+    let stderr_file = models_dir.join(format!(
+        ".download_stderr_{}.log",
+        model_id.replace('/', "_")
+    ));
     let _ = fs::remove_file(&progress_file);
+    let _ = fs::remove_file(&stderr_file);
     cleanup_modelscope_lock(&model_id);
 
     Ok(())

@@ -174,8 +174,9 @@
                 </svg>
                 <span>正在检测环境...</span>
               </div>
-              <div class="dep-install-msg" v-if="dependencyInstallMessage && !installingPackage">
-                <span>{{ dependencyInstallMessage }}</span>
+              <div class="dep-install-msg" :class="{ 'dep-install-error': dependencyInstallIsError }" v-if="dependencyInstallMessage && !installingPackage">
+                <div class="dep-install-msg-content" v-html="formatInstallMessage(dependencyInstallMessage)"></div>
+                <button class="dep-install-dismiss" @click="dependencyInstallMessage = null; dependencyInstallIsError = false" title="关闭">×</button>
               </div>
             </div>
           </div>
@@ -238,8 +239,8 @@
 
               <div class="download-progress-area" v-if="isDownloading || downloadProgress">
                 <div class="download-info">
-                  <span class="download-file" :class="{ 'download-error': downloadProgress?.status === 'error' }">
-                    {{ downloadProgress?.status === 'error' ? '下载失败' : (downloadProgress?.status === 'cancelled' ? '已取消' : (downloadProgress?.message || '准备下载...')) }}
+                  <span class="download-file" :class="{ 'download-error': downloadProgress?.status === 'error' || downloadProgress?.status === 'cancelled' }">
+                    {{ downloadProgress?.status === 'error' ? (downloadProgress?.message || '下载失败') : (downloadProgress?.status === 'cancelled' ? '已取消' : (downloadProgress?.message || '准备下载...')) }}
                   </span>
                   <span v-if="downloadProgress?.status !== 'error' && downloadProgress?.status !== 'cancelled'" class="download-percent">{{ downloadProgress?.progress_percent || 0 }}%</span>
                 </div>
@@ -440,6 +441,7 @@ const {
   deployError,
   installingPackage,
   dependencyInstallMessage,
+  dependencyInstallIsError,
   checkEnvironment,
   downloadModel,
   cancelDownload,
@@ -582,6 +584,18 @@ function installBtnText(pkg: string): string {
     return msg
   }
   return '安装中...'
+}
+
+function formatInstallMessage(msg: string): string {
+  const escaped = msg
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  const withLinks = escaped.replace(
+    /(https?:\/\/[^\s<]+)/g,
+    '<a href="$1" target="_blank" rel="noopener" style="color: var(--color-primary, #6366f1); text-decoration: underline;">$1</a>'
+  )
+  return withLinks.replace(/\n/g, '<br>')
 }
 const editingModel = ref<LocalModel | null>(null)
 const deletingModel = ref<LocalModel | null>(null)
@@ -937,6 +951,33 @@ function handleAddAsProvider(model: LocalModel) {
   border: 1px solid var(--color-border);
   font-size: 12px;
   color: var(--color-text-secondary);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.dep-install-msg.dep-install-error {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #dc2626;
+}
+.dep-install-msg-content {
+  flex: 1;
+  line-height: 1.6;
+  word-break: break-word;
+}
+.dep-install-dismiss {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  opacity: 0.6;
+}
+.dep-install-dismiss:hover {
+  opacity: 1;
 }
 
 .models-dir-row {

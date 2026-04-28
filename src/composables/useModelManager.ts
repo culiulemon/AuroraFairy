@@ -82,6 +82,7 @@ export function useModelManager() {
 
   const installingPackage = ref<string | null>(null)
   const dependencyInstallMessage = ref<string | null>(null)
+  const dependencyInstallIsError = ref(false)
 
   const ENV_STORAGE_KEY = 'aurorafairy-env-status'
 
@@ -239,6 +240,7 @@ export function useModelManager() {
   async function installDependency(packageName: string) {
     installingPackage.value = packageName
     dependencyInstallMessage.value = null
+    dependencyInstallIsError.value = false
     try {
       await invoke('install_dependency', { package: packageName })
     } catch (e: any) {
@@ -246,6 +248,7 @@ export function useModelManager() {
       console.error('Failed to install dependency:', msg)
       installingPackage.value = null
       dependencyInstallMessage.value = msg
+      dependencyInstallIsError.value = true
     }
   }
 
@@ -299,7 +302,6 @@ export function useModelManager() {
         })
       } else if (event.payload.status === 'error' || event.payload.status === 'cancelled') {
         isDownloading.value = false
-        downloadProgress.value = null
         currentDownloadDisplayName.value = ''
       }
     })
@@ -320,6 +322,7 @@ export function useModelManager() {
 
     unlistenDependency = await listen<DependencyInstallProgress>('dependency-install-progress', (event) => {
       dependencyInstallMessage.value = event.payload.message
+      dependencyInstallIsError.value = event.payload.status === 'error'
       if (event.payload.status === 'completed' || event.payload.status === 'error') {
         installingPackage.value = null
       }
@@ -341,6 +344,7 @@ export function useModelManager() {
     deployError,
     installingPackage,
     dependencyInstallMessage,
+    dependencyInstallIsError,
     checkEnvironment,
     downloadModel,
     cancelDownload,
