@@ -439,6 +439,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(move |app| {
             migrate_legacy_data(&app.handle());
+            commands::telemetry::report_launch(&app.handle());
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(ref icon) = tray_icon {
                     let _ = window.set_icon(icon.clone());

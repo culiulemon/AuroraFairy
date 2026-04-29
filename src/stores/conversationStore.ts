@@ -163,7 +163,7 @@ export function appendToMessage(
   messageId: string,
   text: string
 ): void {
-  if (!text || !text.trim()) return
+  if (!text) return
 
   const message = conversation.messages.find(m => m.id === messageId)
   if (message) {
@@ -182,17 +182,15 @@ export function appendReasoningToMessage(
   messageId: string,
   reasoning: string
 ): void {
-  const trimmed = reasoning.trim()
-  if (!trimmed) return
+  if (!reasoning) return
 
-  console.log('[ConversationStore] appendReasoningToMessage:', JSON.stringify(trimmed), 'length:', trimmed.length)
   const message = conversation.messages.find(m => m.id === messageId)
   if (message) {
     const reasoningContent = message.content.find(c => c.type === 'text' && c.reasoning !== undefined)
     if (reasoningContent) {
-      reasoningContent.reasoning = (reasoningContent.reasoning || '') + trimmed
+      reasoningContent.reasoning = (reasoningContent.reasoning || '') + reasoning
     } else {
-      message.content.push({ type: 'text', reasoning: trimmed })
+      message.content.push({ type: 'text', reasoning })
     }
     updateConversationMeta(conversation)
   }

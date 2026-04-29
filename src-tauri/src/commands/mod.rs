@@ -24,4 +24,5 @@ pub use local_models::{
 pub use browser::{BrowserManager, browser_start, browser_execute, browser_stop};
 pub use proxy::{proxy_chat, proxy_chat_stream};
 pub mod fap;
+pub mod telemetry;
 
