@@ -485,7 +485,7 @@ const {
   environmentStatus,
   isDownloading,
   downloadProgress,
-  serverStatuses,
+  serverStatuses: _serverStatuses,
   models,
   deployError,
   deployLogs,

@@ -171,7 +171,7 @@ defineEmits<{
   back: []
 }>()
 
-const appVersion = ref('0.1.17')
+const appVersion = ref('0.1.18')
 const showOpensource = ref(false)
 const buildVersion = ref('dev')
 const runtimeInfo = ref('Tauri')
@@ -224,7 +224,7 @@ onMounted(async () => {
   try {
     appVersion.value = await getVersion()
   } catch {
-    appVersion.value = '0.1.17'
+    appVersion.value = '0.1.18'
   }
   runtimeInfo.value = navigator.userAgent.includes('Windows') ? 'Windows' : 'Unknown'
 })

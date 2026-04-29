@@ -304,23 +304,23 @@ export function useModelManager() {
         switch (packageName) {
           case 'python':
             status.python = result.installed
-            if (result.version) status.pythonVersion = result.version
+            if (result.version) status.python_version = result.version
             break
           case 'modelscope':
             status.modelscope = result.installed
             break
           case 'openvino':
             status.openvino = result.installed
-            if (result.version) status.openvinoVersion = result.version
+            if (result.version) status.openvino_version = result.version
             break
           case 'openvino-genai':
-            status.openvinoGenai = result.installed
+            status.openvino_genai = result.installed
             break
           case 'optimum':
             status.optimum = result.installed
             break
           case 'llama-cpp-python':
-            status.llamaCpp = result.installed
+            status.llama_cpp = result.installed
             break
           case 'transformers':
             status.transformers = result.installed
@@ -333,7 +333,7 @@ export function useModelManager() {
             break
         }
         environmentStatus.value = status
-        saveCachedEnvironment(status)
+        saveEnvironmentStatus(status)
       }
     } catch (e) {
       console.error('Failed to check single dep:', e)
