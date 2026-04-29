@@ -22,11 +22,13 @@
             v-for="option in options"
             :key="option.value ?? ''"
             class="select-option"
-            :class="{ active: modelValue === option.value }"
-            @click="select(option.value)"
+            :class="{ active: modelValue === option.value, disabled: option.disabled }"
+            @click="!option.disabled && select(option.value)"
+            :title="option.disabledReason || ''"
           >
             <span class="option-name">{{ option.label }}</span>
-            <span v-if="option.sub" class="option-sub">{{ option.sub }}</span>
+            <span v-if="option.disabledReason && option.disabled" class="option-disabled-reason">{{ option.disabledReason }}</span>
+            <span v-else-if="option.sub" class="option-sub">{{ option.sub }}</span>
           </div>
           <div v-if="options.length === 0" class="select-empty">{{ emptyText }}</div>
         </div>
@@ -42,6 +44,8 @@ export interface SelectOption {
   value: string | null
   label: string
   sub?: string
+  disabled?: boolean
+  disabledReason?: string
 }
 
 interface Props {
@@ -203,6 +207,22 @@ onBeforeUnmount(() => {
 .select-option.active .option-name {
   color: var(--color-primary);
   font-weight: 700;
+}
+
+.select-option.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.select-option.disabled:hover {
+  background: transparent;
+}
+
+.option-disabled-reason {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-weight: 400;
+  font-style: italic;
 }
 
 .option-name {

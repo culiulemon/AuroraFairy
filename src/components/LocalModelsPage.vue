@@ -52,10 +52,26 @@
                   </span>
                   <button class="env-info-btn" @click="showDepInfo('gpu')" title="查看详情">ⓘ</button>
                 </div>
+                <div class="env-check-row" :class="{ ok: environmentStatus.msvc, fail: !environmentStatus.msvc }">
+                  <span class="env-check-name">MSVC Build Tools</span>
+                  <span class="env-check-status">
+                    <span class="env-check-ok" v-if="environmentStatus.msvc">已安装</span>
+                    <button v-if="environmentStatus.msvc" class="env-uninstall-btn" @click="uninstallDependency('msvc')" :disabled="!!uninstallingPackage" title="手动卸载">卸载</button>
+                    <button v-else class="env-install-btn" @click="installDependency('msvc')" :disabled="!!installingPackage">
+                      <svg v-if="installingPackage === 'msvc'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
+                        <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
+                        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                      </svg>
+                      {{ installBtnText('msvc') }}
+                    </button>
+                  </span>
+                  <button class="env-info-btn" @click="showDepInfo('msvc')" title="查看详情">ⓘ</button>
+                </div>
                 <div class="env-check-row" :class="{ ok: environmentStatus.modelscope, fail: !environmentStatus.modelscope }">
                   <span class="env-check-name">ModelScope</span>
                   <span class="env-check-status">
                     <span class="env-check-ok" v-if="environmentStatus.modelscope">正常</span>
+                    <button v-if="environmentStatus.modelscope" class="env-uninstall-btn" @click="uninstallDependency('modelscope')" :disabled="!!uninstallingPackage">卸载</button>
                     <button v-else class="env-install-btn" @click="handleInstallDep('modelscope')" :disabled="!!installingPackage">
                       <svg v-if="installingPackage === 'modelscope'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
                         <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
@@ -75,6 +91,7 @@
                   <span class="env-check-name">llama.cpp</span>
                   <span class="env-check-status">
                     <span class="env-check-ok" v-if="environmentStatus.llama_cpp">已安装</span>
+                    <button v-if="environmentStatus.llama_cpp" class="env-uninstall-btn" @click="uninstallDependency('llama-cpp-python')" :disabled="!!uninstallingPackage">卸载</button>
                     <span class="env-recommend-tag" v-if="!environmentStatus.llama_cpp && envRecommendLLamacpp">推荐</span>
                     <button v-if="!environmentStatus.llama_cpp" class="env-install-btn" @click="installDependency('llama-cpp-python')" :disabled="!!installingPackage">
                       <svg v-if="installingPackage === 'llama-cpp-python'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
@@ -90,6 +107,7 @@
                   <span class="env-check-name">Intel oneAPI</span>
                   <span class="env-check-status">
                     <span class="env-check-ok" v-if="environmentStatus.oneapi">已安装</span>
+                    <button v-if="environmentStatus.oneapi" class="env-uninstall-btn" @click="uninstallDependency('oneapi')" :disabled="!!uninstallingPackage">卸载</button>
                     <span class="env-recommend-tag" v-if="!environmentStatus.oneapi">推荐</span>
                     <button v-if="!environmentStatus.oneapi" class="env-install-btn" @click="installDependency('oneapi')">
                       <svg v-if="installingPackage === 'oneapi'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
@@ -108,7 +126,8 @@
                   </span>
                   <span class="env-check-status">
                     <span class="env-check-ok" v-if="environmentStatus.openvino">正常</span>
-                    <button v-else class="env-install-btn" @click="handleInstallDep('openvino')" :disabled="!!installingPackage">
+                    <button v-if="environmentStatus.openvino" class="env-uninstall-btn" @click="uninstallDependency('openvino')" :disabled="!!uninstallingPackage">卸载</button>
+                    <button v-if="!environmentStatus.openvino" class="env-install-btn" @click="handleInstallDep('openvino')" :disabled="!!installingPackage">
                       <svg v-if="installingPackage === 'openvino'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
                         <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
                         <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
@@ -122,7 +141,8 @@
                   <span class="env-check-name">OpenVINO GenAI</span>
                   <span class="env-check-status">
                     <span class="env-check-ok" v-if="environmentStatus.openvino_genai">正常</span>
-                    <button v-else class="env-install-btn" @click="handleInstallDep('openvino-genai')" :disabled="!!installingPackage">
+                    <button v-if="environmentStatus.openvino_genai" class="env-uninstall-btn" @click="uninstallDependency('openvino-genai')" :disabled="!!uninstallingPackage">卸载</button>
+                    <button v-if="!environmentStatus.openvino_genai" class="env-install-btn" @click="handleInstallDep('openvino-genai')" :disabled="!!installingPackage">
                       <svg v-if="installingPackage === 'openvino-genai'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
                         <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
                         <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
@@ -136,7 +156,8 @@
                   <span class="env-check-name">Optimum (Intel)</span>
                   <span class="env-check-status">
                     <span class="env-check-ok" v-if="environmentStatus.optimum">正常</span>
-                    <button v-else class="env-install-btn" @click="handleInstallDep('optimum[openvino]')" :disabled="!!installingPackage">
+                    <button v-if="environmentStatus.optimum" class="env-uninstall-btn" @click="uninstallDependency('optimum')" :disabled="!!uninstallingPackage">卸载</button>
+                    <button v-if="!environmentStatus.optimum" class="env-install-btn" @click="handleInstallDep('optimum[openvino]')" :disabled="!!installingPackage">
                       <svg v-if="installingPackage === 'optimum[openvino]'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
                         <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
                         <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
@@ -150,7 +171,8 @@
                   <span class="env-check-name">Transformers</span>
                   <span class="env-check-status">
                     <span class="env-check-ok" v-if="environmentStatus.transformers">已安装</span>
-                    <button v-else class="env-install-btn" @click="handleInstallDep('transformers')" :disabled="!!installingPackage">
+                    <button v-if="environmentStatus.transformers" class="env-uninstall-btn" @click="uninstallDependency('transformers')" :disabled="!!uninstallingPackage">卸载</button>
+                    <button v-if="!environmentStatus.transformers" class="env-install-btn" @click="handleInstallDep('transformers')" :disabled="!!installingPackage">
                       <svg v-if="installingPackage === 'transformers'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
                         <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
                         <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
@@ -266,6 +288,28 @@
                 <span class="deploy-error-text">{{ deployError }}</span>
                 <button class="deploy-error-close" @click="deployError = null">关闭</button>
               </div>
+              <div class="deploy-log-panel" v-if="deployLogs.length > 0 || isDeploying">
+                <div class="deploy-log-header">
+                  <span class="deploy-log-title">
+                    <svg v-if="isDeploying" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
+                      <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line>
+                      <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                    </svg>
+                    部署日志
+                  </span>
+                  <button class="deploy-log-clear" @click="clearDeployLogs" v-if="!isDeploying">清空</button>
+                </div>
+                <div class="deploy-log-body" ref="deployLogContainer">
+                  <div v-for="(log, i) in deployLogs" :key="i" class="deploy-log-line" :class="'log-' + log.source">
+                    <span class="log-source-tag">{{ log.source === 'stdout' ? 'OUT' : 'ERR' }}</span>
+                    <span class="log-text">{{ log.line }}</span>
+                  </div>
+                  <div v-if="isDeploying && deployLogs.length === 0" class="deploy-log-line">
+                    <span class="log-source-tag">OUT</span>
+                    <span class="log-text log-waiting">等待服务器输出...</span>
+                  </div>
+                </div>
+              </div>
               <div class="models-list" v-if="models.length > 0">
                 <div v-for="model in models" :key="model.id" class="model-card">
                   <div class="model-left">
@@ -347,11 +391,11 @@
     <BaseDialog v-model="showDeployConfig" title="部署配置">
       <div class="form-group">
         <label>推理后端</label>
-        <select class="device-select" v-model="deployConfigForm.backend">
-          <option value="llama-cpp">llama.cpp (GGUF)</option>
-          <option value="openvino">OpenVINO (IR)</option>
-          <option value="transformers">Transformers (Safetensors)</option>
-        </select>
+        <BaseSelect
+          :modelValue="deployConfigForm.backend"
+          :options="backendOptions"
+          @update:modelValue="deployConfigForm.backend = ($event as InferenceBackend) ?? 'llama-cpp'"
+        />
         <span class="form-hint">GGUF 模型请选 llama.cpp，OpenVINO IR 模型请选 OpenVINO</span>
       </div>
       <div class="form-group">
@@ -361,10 +405,11 @@
       </div>
       <div class="form-group">
         <label>推理设备</label>
-        <select class="device-select" v-model="deployConfigForm.device">
-          <option value="GPU" v-if="discreteGpus.length > 0">GPU ({{ discreteGpuLabel }})</option>
-          <option value="CPU">CPU</option>
-        </select>
+        <BaseSelect
+          :modelValue="deployConfigForm.device"
+          :options="deviceOptions"
+          @update:modelValue="deployConfigForm.device = ($event as string) ?? 'CPU'"
+        />
         <span class="form-hint" v-if="discreteGpus.length > 0">选择 GPU 可获得更快推理速度</span>
         <span class="form-hint" v-else>未检测到独立显卡，仅 CPU 可用</span>
       </div>
@@ -422,9 +467,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, nextTick, watch } from 'vue'
 import BaseDialog from './BaseDialog.vue'
+import BaseSelect from './BaseSelect.vue'
+import type { SelectOption } from './BaseSelect.vue'
 import { useModelManager } from '../composables/useModelManager'
+import { invoke } from '@tauri-apps/api/core'
 import type { LocalModel, InferenceBackend } from '../stores/localModels'
 import { getDefaultDeployConfig, updateLocalModel, getBackendForFormat } from '../stores/localModels'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -437,8 +485,12 @@ const {
   environmentStatus,
   isDownloading,
   downloadProgress,
+  serverStatuses,
   models,
   deployError,
+  deployLogs,
+  isDeploying,
+  clearDeployLogs,
   installingPackage,
   dependencyInstallMessage,
   dependencyInstallIsError,
@@ -450,6 +502,8 @@ const {
   deleteModel,
   addAsProvider,
   installDependency,
+  uninstallDependency,
+  uninstallingPackage,
   modelsDir,
   defaultModelsDir,
   setModelsDir,
@@ -466,6 +520,15 @@ const showDeployConfig = ref(false)
 const showDeleteConfirm = ref(false)
 const showDepInfoDialog = ref(false)
 const depInfoData = ref<{ title: string; desc: string; pros?: string[]; cons?: string[]; useCases?: string[] } | null>(null)
+const deployLogContainer = ref<HTMLElement | null>(null)
+
+watch(deployLogs, () => {
+  nextTick(() => {
+    if (deployLogContainer.value) {
+      deployLogContainer.value.scrollTop = deployLogContainer.value.scrollHeight
+    }
+  })
+}, { deep: true })
 
 interface DepInfoItem {
   title: string
@@ -476,6 +539,13 @@ interface DepInfoItem {
 }
 
 const depInfoMap: Record<string, DepInfoItem> = {
+  msvc: {
+    title: 'Visual Studio Build Tools (MSVC)',
+    desc: 'Microsoft Visual C++ 编译工具，用于从源码编译 llama-cpp-python。缺少时 llama-cpp-python 的预编译包可能因 SVML 依赖问题无法加载。',
+    pros: ['微软官方工具，免费使用', '从源码编译避免 SVML 兼容性问题', '一次安装，长期可用'],
+    cons: ['安装体积较大（约 2-6 GB）', '安装需要管理员权限', '安装过程需要几分钟'],
+    useCases: ['安装 llama.cpp 前必须先安装此工具', '安装时只需勾选「使用 C++ 的桌面开发」工作负载'],
+  },
   python: {
     title: 'Python',
     desc: 'Python 运行环境，所有推理后端和模型下载工具的基础依赖。',
@@ -608,6 +678,39 @@ const deployConfigForm = reactive({
   backend: 'llama-cpp' as InferenceBackend
 })
 
+const backendOptions = computed<SelectOption[]>(() => {
+  const format = editingModel.value?.modelFormat || 'unknown'
+  const opts: SelectOption[] = [
+    { value: 'llama-cpp', label: 'llama.cpp (GGUF)' },
+    { value: 'openvino', label: 'OpenVINO (IR)' },
+    { value: 'transformers', label: 'Transformers (Safetensors)' }
+  ]
+  if (format === 'gguf') {
+    opts[1].disabled = true
+    opts[1].disabledReason = 'GGUF 模型不支持'
+    opts[2].disabled = true
+    opts[2].disabledReason = 'GGUF 模型不支持'
+  } else if (format === 'openvino-ir') {
+    opts[0].disabled = true
+    opts[0].disabledReason = 'IR 模型不支持'
+    opts[2].disabled = true
+    opts[2].disabledReason = 'IR 模型不支持'
+  } else if (format === 'safetensors') {
+    opts[0].disabled = true
+    opts[0].disabledReason = 'Safetensors 模型不支持'
+  }
+  return opts
+})
+
+const deviceOptions = computed<SelectOption[]>(() => {
+  const opts: SelectOption[] = []
+  if (discreteGpus.value.length > 0) {
+    opts.push({ value: 'GPU', label: `GPU (${discreteGpuLabel.value})` })
+  }
+  opts.push({ value: 'CPU', label: 'CPU' })
+  return opts
+})
+
 function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -683,14 +786,29 @@ async function handleChangeModelsDir() {
   }
 }
 
-function openDeployConfig(model: LocalModel) {
+async function openDeployConfig(model: LocalModel) {
   editingModel.value = model
+  let format = model.modelFormat
+  if (!format || format === 'unknown') {
+    try {
+      const info = await invoke<{ model_format: string; gguf_files: string[] }>('get_model_info', {
+        localDir: model.localPath
+      })
+      format = info.model_format as any
+      if (format && format !== 'unknown') {
+        updateLocalModel(model.id, { modelFormat: format })
+        editingModel.value = { ...model, modelFormat: format }
+      }
+    } catch (e) {
+      console.error('Failed to detect model format:', e)
+    }
+  }
   const config = model.deployConfig || getDefaultDeployConfig()
   deployConfigForm.ctxSize = config.ctxSize
   deployConfigForm.threads = config.threads
   deployConfigForm.device = config.device || (discreteGpus.value.length > 0 ? 'GPU' : 'CPU')
   deployConfigForm.port = config.port || 8000
-  deployConfigForm.backend = config.backend || getBackendForFormat(model.modelFormat)
+  deployConfigForm.backend = config.backend || getBackendForFormat(format)
   showDeployConfig.value = true
 }
 
@@ -893,6 +1011,29 @@ function handleAddAsProvider(model: LocalModel) {
   color: var(--color-accent-success);
   font-weight: 600;
   font-size: 13px;
+}
+
+.env-uninstall-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: 4px;
+}
+
+.env-uninstall-btn:hover:not(:disabled) {
+  border-color: var(--color-accent-error, #dc2626);
+  color: var(--color-accent-error, #dc2626);
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.env-uninstall-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .env-check-ver {
@@ -1421,6 +1562,113 @@ function handleAddAsProvider(model: LocalModel) {
   background: var(--color-accent-error-alpha-15);
 }
 
+.deploy-log-panel {
+  margin-bottom: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-card);
+  overflow: hidden;
+}
+
+.deploy-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.deploy-log-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.deploy-log-clear {
+  padding: 2px 10px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.deploy-log-clear:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.deploy-log-body {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 6px 0;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.deploy-log-body::-webkit-scrollbar {
+  width: 4px;
+}
+
+.deploy-log-body::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 2px;
+}
+
+.deploy-log-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 1px 12px;
+  word-break: break-all;
+}
+
+.deploy-log-line:hover {
+  background: var(--color-surface-secondary);
+}
+
+.log-source-tag {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-top: 2px;
+  letter-spacing: 0.03em;
+}
+
+.log-stdout .log-source-tag {
+  background: rgba(52, 152, 219, 0.15);
+  color: #3498db;
+}
+
+.log-stderr .log-source-tag {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.log-text {
+  color: var(--color-text-secondary);
+  flex: 1;
+  min-width: 0;
+}
+
+.log-stderr .log-text {
+  color: #dc2626;
+}
+
+.log-waiting {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
 .model-right {
   display: flex;
   flex-direction: column;
@@ -1640,26 +1888,6 @@ function handleAddAsProvider(model: LocalModel) {
   opacity: 0.6;
   background: var(--color-border);
   cursor: not-allowed;
-}
-
-.device-select {
-  width: 100%;
-  padding: 12px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  font-size: 14px;
-  color: var(--color-text-primary);
-  background: var(--color-surface);
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  appearance: none;
-  cursor: pointer;
-}
-
-.device-select:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  background: var(--color-surface-card);
-  box-shadow: 0 0 0 3px var(--color-primary-alpha-15);
 }
 
 .form-hint {

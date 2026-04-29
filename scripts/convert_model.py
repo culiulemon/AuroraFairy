@@ -87,9 +87,11 @@ def main():
         write_progress(progress_file, "completed", "", 100.0, f"转换完成: {output_dir}")
 
     except ImportError as e:
+        print(f"[ERROR] 缺少依赖: {e} (请运行 pip install optimum[openvino])", file=sys.stderr)
         write_progress(progress_file, "error", "", 0.0, f"缺少依赖: {e} (请运行 pip install optimum[openvino])")
         sys.exit(2)
     except Exception as e:
+        print(f"[ERROR] 转换失败: {e}", file=sys.stderr)
         write_progress(progress_file, "error", "", 0.0, f"转换失败: {e}")
         if output_path.exists():
             import shutil

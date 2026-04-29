@@ -24,6 +24,7 @@ function incrementVersion(version) {
 
 const packageJsonPath = resolve(rootDir, 'package.json')
 const tauriConfPath = resolve(rootDir, 'src-tauri', 'tauri.conf.json')
+const cargoTomlPath = resolve(rootDir, 'src-tauri', 'Cargo.toml')
 const aboutPagePath = resolve(rootDir, 'src', 'components', 'AboutPage.vue')
 
 const packageJson = readJson(packageJsonPath)
@@ -37,10 +38,22 @@ tauriConf.version = newVersion
 writeJson(tauriConfPath, tauriConf)
 console.log(`tauri.conf.json version updated to ${newVersion}`)
 
-const aboutPageContent = readFileSync(aboutPagePath, 'utf-8')
-const updatedAboutPage = aboutPageContent.replace(
+const cargoTomlContent = readFileSync(cargoTomlPath, 'utf-8')
+const updatedCargoToml = cargoTomlContent.replace(
+  /^version\s*=\s*"[^"]*"/m,
+  `version = "${newVersion}"`
+)
+writeFileSync(cargoTomlPath, updatedCargoToml)
+console.log(`Cargo.toml version updated to ${newVersion}`)
+
+let aboutPageContent = readFileSync(aboutPagePath, 'utf-8')
+aboutPageContent = aboutPageContent.replace(
   /const appVersion = ref\(['"]([^'"]+)['"]\)/,
   `const appVersion = ref('${newVersion}')`
 )
-writeFileSync(aboutPagePath, updatedAboutPage)
-console.log(`AboutPage.vue default version updated to ${newVersion}`)
+aboutPageContent = aboutPageContent.replace(
+  /appVersion\.value = ['"]([^'"]+)['"]/g,
+  `appVersion.value = '${newVersion}'`
+)
+writeFileSync(aboutPagePath, aboutPageContent)
+console.log(`AboutPage.vue version updated to ${newVersion}`)

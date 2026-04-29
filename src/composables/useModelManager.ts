@@ -23,6 +23,7 @@ interface EnvironmentStatus {
   llama_cpp: boolean
   oneapi: boolean
   transformers: boolean
+  msvc: boolean
 }
 
 interface DependencyInstallProgress {
@@ -45,6 +46,18 @@ interface ServerStatus {
   message: string
 }
 
+interface SingleDepStatus {
+  key: string
+  installed: boolean
+  version: string | null
+}
+
+export interface DeployLogEntry {
+  modelId: string
+  line: string
+  source: string
+}
+
 export function useModelManager() {
   const environmentStatus = ref<EnvironmentStatus | null>(null)
   const isDownloading = ref(false)
@@ -57,6 +70,7 @@ export function useModelManager() {
   let unlistenDownload: UnlistenFn | null = null
   let unlistenServer: UnlistenFn | null = null
   let unlistenDependency: UnlistenFn | null = null
+  let unlistenDeployLog: UnlistenFn | null = null
 
   const modelsDir = ref<string | null>(null)
   const defaultModelsDir = ref<string>('')
@@ -91,7 +105,7 @@ export function useModelManager() {
       const stored = localStorage.getItem(ENV_STORAGE_KEY)
       if (stored) {
         const parsed = JSON.parse(stored)
-        if (parsed && Array.isArray(parsed.gpus) && 'transformers' in parsed) return parsed
+        if (parsed && Array.isArray(parsed.gpus) && 'transformers' in parsed && 'msvc' in parsed) return parsed
       }
     } catch { /* ignore */ }
     return null
@@ -143,9 +157,17 @@ export function useModelManager() {
   }
 
   const deployError = ref<string | null>(null)
+  const deployLogs = ref<DeployLogEntry[]>([])
+  const isDeploying = ref(false)
+
+  function clearDeployLogs() {
+    deployLogs.value = []
+  }
 
   async function deployModel(model: LocalModel) {
     deployError.value = null
+    deployLogs.value = []
+    isDeploying.value = true
     try {
       const config = model.deployConfig || getDefaultDeployConfig()
       if (!config.backend || config.backend === getDefaultDeployConfig().backend) {
@@ -166,7 +188,7 @@ export function useModelManager() {
           localDir: model.localPath
         })
         if (info.gguf_files && info.gguf_files.length > 0) {
-          ggufFile = info.gguf_files[0]
+          ggufFile = info.gguf_files.find(f => !f.toLowerCase().includes('mmproj')) || info.gguf_files[0]
         }
       }
       const port = await invoke<number>('deploy_model', {
@@ -183,6 +205,8 @@ export function useModelManager() {
       deployError.value = msg
       updateLocalModel(model.id, { status: 'error' })
       refreshModels()
+    } finally {
+      isDeploying.value = false
     }
   }
 
@@ -243,12 +267,76 @@ export function useModelManager() {
     dependencyInstallIsError.value = false
     try {
       await invoke('install_dependency', { package: packageName })
+      await checkSingleDep(packageName)
     } catch (e: any) {
       const msg = String(e)
       console.error('Failed to install dependency:', msg)
       installingPackage.value = null
       dependencyInstallMessage.value = msg
       dependencyInstallIsError.value = true
+    }
+  }
+
+  const uninstallingPackage = ref<string | null>(null)
+
+  async function uninstallDependency(packageName: string) {
+    uninstallingPackage.value = packageName
+    dependencyInstallMessage.value = null
+    dependencyInstallIsError.value = false
+    try {
+      await invoke('uninstall_dependency', { package: packageName })
+      await checkSingleDep(packageName)
+    } catch (e: any) {
+      const msg = String(e)
+      console.error('Failed to uninstall dependency:', msg)
+      dependencyInstallMessage.value = msg
+      dependencyInstallIsError.value = true
+    } finally {
+      uninstallingPackage.value = null
+    }
+  }
+
+  async function checkSingleDep(packageName: string) {
+    try {
+      const result = await invoke<SingleDepStatus>('check_single_dep', { package: packageName })
+      if (environmentStatus.value) {
+        const status = { ...environmentStatus.value }
+        switch (packageName) {
+          case 'python':
+            status.python = result.installed
+            if (result.version) status.pythonVersion = result.version
+            break
+          case 'modelscope':
+            status.modelscope = result.installed
+            break
+          case 'openvino':
+            status.openvino = result.installed
+            if (result.version) status.openvinoVersion = result.version
+            break
+          case 'openvino-genai':
+            status.openvinoGenai = result.installed
+            break
+          case 'optimum':
+            status.optimum = result.installed
+            break
+          case 'llama-cpp-python':
+            status.llamaCpp = result.installed
+            break
+          case 'transformers':
+            status.transformers = result.installed
+            break
+          case 'oneapi':
+            status.oneapi = result.installed
+            break
+          case 'msvc':
+            status.msvc = result.installed
+            break
+        }
+        environmentStatus.value = status
+        saveCachedEnvironment(status)
+      }
+    } catch (e) {
+      console.error('Failed to check single dep:', e)
     }
   }
 
@@ -327,12 +415,21 @@ export function useModelManager() {
         installingPackage.value = null
       }
     })
+
+    unlistenDeployLog = await listen<{ model_id: string; line: string; source: string }>('model-deploy-log', (event) => {
+      deployLogs.value.push({
+        modelId: event.payload.model_id,
+        line: event.payload.line,
+        source: event.payload.source,
+      })
+    })
   })
 
   onUnmounted(() => {
     unlistenDownload?.()
     unlistenServer?.()
     unlistenDependency?.()
+    unlistenDeployLog?.()
   })
 
   return {
@@ -342,6 +439,9 @@ export function useModelManager() {
     serverStatuses,
     models,
     deployError,
+    deployLogs,
+    isDeploying,
+    clearDeployLogs,
     installingPackage,
     dependencyInstallMessage,
     dependencyInstallIsError,
@@ -354,6 +454,8 @@ export function useModelManager() {
     addAsProvider,
     refreshModels,
     installDependency,
+    uninstallDependency,
+    uninstallingPackage,
     modelsDir,
     defaultModelsDir,
     setModelsDir,

@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[cfg(target_os = "windows")]
 #[allow(unused_imports)]
@@ -38,9 +39,13 @@ fn get_model_server() -> Arc<Mutex<Option<ModelServer>>> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Backend {
+    #[serde(rename = "openvino")]
     OpenVINO,
+    #[serde(rename = "llama-cpp")]
     LlamaCpp,
+    #[serde(rename = "tensorrt-llm")]
     TensorRTLLM,
+    #[serde(rename = "transformers")]
     Transformers,
 }
 
@@ -177,6 +182,7 @@ pub struct EnvironmentStatus {
     pub llama_cpp: bool,
     pub oneapi: bool,
     pub transformers: bool,
+    pub msvc: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -208,6 +214,14 @@ pub struct ServerStatus {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct DeployLog {
+    pub model_id: String,
+    pub line: String,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct DeployConfig {
     pub ctx_size: u32,
     pub threads: u32,
@@ -219,6 +233,51 @@ pub struct DeployConfig {
 
 fn default_backend() -> Backend {
     Backend::LlamaCpp
+}
+
+fn spawn_log_reader(app: tauri::AppHandle, model_id: String, child: &mut Child) {
+    if let Some(stdout) = child.stdout.take() {
+        let app_clone = app.clone();
+        let mid = model_id.clone();
+        tokio::spawn(async move {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        let _ = app_clone.emit("model-deploy-log", DeployLog {
+                            model_id: mid.clone(),
+                            line,
+                            source: "stdout".to_string(),
+                        });
+                    }
+                    Ok(None) => break,
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+    if let Some(stderr) = child.stderr.take() {
+        let app_clone = app.clone();
+        let mid = model_id.clone();
+        tokio::spawn(async move {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        let _ = app_clone.emit("model-deploy-log", DeployLog {
+                            model_id: mid.clone(),
+                            line,
+                            source: "stderr".to_string(),
+                        });
+                    }
+                    Ok(None) => break,
+                    Err(_) => break,
+                }
+            }
+        });
+    }
 }
 
 #[allow(dead_code)]
@@ -271,19 +330,23 @@ async fn start_model_server(
     app: &tauri::AppHandle,
     backend: &Backend,
     port: u16,
+    model_id: &str,
 ) -> Result<(), String> {
     let server_state = get_model_server();
     {
         let guard = server_state.lock().await;
         if let Some(ref server) = *guard {
-            let health_url = format!("http://127.0.0.1:{}/health", server.port);
             if let Ok(client) = reqwest::Client::builder()
                 .timeout(Duration::from_secs(3))
                 .build()
             {
-                if let Ok(resp) = client.get(&health_url).send().await {
-                    if resp.status().is_success() {
-                        return Ok(());
+                let endpoints = ["/health", "/v1/models"];
+                for ep in &endpoints {
+                    let url = format!("http://127.0.0.1:{}{}", server.port, ep);
+                    if let Ok(resp) = client.get(&url).send().await {
+                        if resp.status().is_success() {
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -325,13 +388,15 @@ async fn start_model_server(
         }
     };
 
-    cmd.stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
-    let child = cmd
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("启动服务器失败: {}", e))?;
+
+    spawn_log_reader(app.clone(), model_id.to_string(), &mut child);
 
     {
         let mut guard = server_state.lock().await;
@@ -342,7 +407,7 @@ async fn start_model_server(
         });
     }
 
-    let health_url = format!("http://127.0.0.1:{}/health", port);
+    let health_endpoints = ["/health", "/v1/models"];
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
         .build()
@@ -352,15 +417,21 @@ async fn start_model_server(
     loop {
         tokio::time::sleep(Duration::from_millis(500)).await;
         retries += 1;
-        match client.get(&health_url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                break;
-            }
-            _ => {
-                if retries > 30 {
-                    return Err("服务器启动超时 (15秒)".to_string());
+        let mut healthy = false;
+        for ep in &health_endpoints {
+            let url = format!("http://127.0.0.1:{}{}", port, ep);
+            if let Ok(resp) = client.get(&url).send().await {
+                if resp.status().is_success() {
+                    healthy = true;
+                    break;
                 }
             }
+        }
+        if healthy {
+            break;
+        }
+        if retries > 30 {
+            return Err("服务器启动超时 (15秒)".to_string());
         }
     }
 
@@ -497,6 +568,8 @@ pub async fn check_environment() -> Result<EnvironmentStatus, String> {
         _ => false,
     };
 
+    let msvc = detect_msvc();
+
     Ok(EnvironmentStatus {
         python,
         python_version,
@@ -509,6 +582,7 @@ pub async fn check_environment() -> Result<EnvironmentStatus, String> {
         llama_cpp,
         oneapi,
         transformers,
+        msvc,
     })
 }
 
@@ -664,6 +738,29 @@ async fn check_intel_gpu() -> bool {
     gpus.iter().any(|g| g.vendor == "Intel" && g.gpu_type == "discrete")
 }
 
+fn detect_msvc() -> bool {
+    let editions = ["BuildTools", "Community", "Professional", "Enterprise"];
+    for edition in &editions {
+        let path = std::path::PathBuf::from(format!(
+            r"C:\Program Files\Microsoft Visual Studio\2022\{}\VC\Tools\MSVC",
+            edition
+        ));
+        if path.exists() {
+            return true;
+        }
+    }
+    for edition in &editions {
+        let path = std::path::PathBuf::from(format!(
+            r"C:\Program Files (x86)\Microsoft Visual Studio\2019\{}\VC\Tools\MSVC",
+            edition
+        ));
+        if path.exists() {
+            return true;
+        }
+    }
+    false
+}
+
 fn decode_cmd_output(raw: &[u8]) -> String {
     if raw.is_empty() {
         return String::new();
@@ -751,7 +848,28 @@ pub async fn install_dependency(
 
     let mut cmd = Command::new("cmd");
 
-    if package == "oneapi" {
+    if package == "msvc" {
+        let progress = InstallProgress {
+            status: "installing".to_string(),
+            message: "正在打开 Visual Studio Build Tools 下载页面...".to_string(),
+        };
+        let _ = app.emit("dependency-install-progress", progress);
+        let mut open_cmd = Command::new("cmd");
+        open_cmd.args([
+            "/C",
+            "start",
+            "https://visualstudio.microsoft.com/zh-hans/visual-cpp-build-tools/",
+        ]);
+        #[cfg(target_os = "windows")]
+        open_cmd.creation_flags(CREATE_NO_WINDOW);
+        let _ = open_cmd.spawn();
+        let progress2 = InstallProgress {
+            status: "completed".to_string(),
+            message: "已在浏览器中打开 Build Tools 下载页面。请下载并运行安装器，安装时勾选「使用 C++ 的桌面开发」工作负载，安装完成后重新检测环境。".to_string(),
+        };
+        let _ = app.emit("dependency-install-progress", progress2);
+        return Ok(());
+    } else if package == "oneapi" {
         let progress = InstallProgress {
             status: "installing".to_string(),
             message: "正在打开 Intel oneAPI 下载页面...".to_string(),
@@ -856,7 +974,20 @@ pub async fn install_dependency(
         } else if has_intel_gpu && !has_oneapi {
             return Err("检测到 Intel GPU 但未安装 Intel oneAPI。请先安装 oneAPI（点击上方 oneAPI 的下载按钮），然后再安装 llama.cpp。".to_string());
         } else {
-            cmd.args(["/C", "python", "-m", "pip", "install", &package]);
+            if !detect_msvc() {
+                return Err("编译 llama-cpp-python 需要 Visual Studio Build Tools。\n请先点击环境检测中「MSVC」旁边的安装按钮，安装时勾选「使用 C++ 的桌面开发」工作负载，安装完成后重新检测环境再试。".to_string());
+            }
+            let progress2 = InstallProgress {
+                status: "installing".to_string(),
+                message: "正在从源码编译 llama-cpp-python（约需3-5分钟）...".to_string(),
+            };
+            let _ = app.emit("dependency-install-progress", progress2);
+            let _ = Command::new("cmd")
+                .args(["/C", "python", "-m", "pip", "uninstall", "llama-cpp-python", "-y"])
+                .output()
+                .await;
+            cmd.env("CMAKE_ARGS", "-DCMAKE_C_FLAGS=/utf-8 -DCMAKE_CXX_FLAGS=/utf-8");
+            cmd.args(["/C", "python", "-m", "pip", "install", "llama-cpp-python", "--no-binary", "llama-cpp-python", "--force-reinstall"]);
         }
     } else if package == "transformers" {
         let torch_check = Command::new("cmd")
@@ -891,9 +1022,9 @@ pub async fn install_dependency(
             message: "正在安装 Transformers...".to_string(),
         };
         let _ = app.emit("dependency-install-progress", progress2);
-        cmd.args(["/C", "python", "-m", "pip", "install", "transformers"]);
+        cmd.args(["/C", "python", "-m", "pip", "install", "transformers", "--upgrade"]);
     } else {
-        cmd.args(["/C", "python", "-m", "pip", "install", &package]);
+        cmd.args(["/C", "python", "-m", "pip", "install", "--upgrade", &package]);
     }
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
@@ -904,6 +1035,16 @@ pub async fn install_dependency(
 
     match result {
         Ok(output) if output.status.success() => {
+            if package == "llama-cpp-python" {
+                let server_deps = ["sse-starlette", "starlette-context", "uvicorn"];
+                for dep in &server_deps {
+                    let mut dep_cmd = Command::new("cmd");
+                    dep_cmd.args(["/C", "python", "-m", "pip", "install", dep]);
+                    #[cfg(target_os = "windows")]
+                    dep_cmd.creation_flags(CREATE_NO_WINDOW);
+                    let _ = dep_cmd.output().await;
+                }
+            }
             let progress = InstallProgress {
                 status: "completed".to_string(),
                 message: format!("{} 安装完成", package),
@@ -1326,6 +1467,28 @@ pub async fn convert_model_to_ir(
         return Err(format!("模型目录不存在: {}", model_path));
     }
 
+    let mut has_config = false;
+    let mut has_gguf = false;
+    for entry in WalkDir::new(&abs_model_dir).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name == "config.json" {
+                    has_config = true;
+                }
+                if name.to_lowercase().ends_with(".gguf") {
+                    has_gguf = true;
+                }
+            }
+        }
+    }
+    if !has_config {
+        if has_gguf {
+            return Err("GGUF 格式的模型无法转换为 OpenVINO IR。GGUF 是 llama.cpp 专用格式，请使用 llama.cpp 后端部署。如需使用 OpenVINO，请下载 HuggingFace 原始格式（safetensors）的模型。".to_string());
+        } else {
+            return Err("模型目录中未找到 config.json，无法进行 OpenVINO 转换。请确保模型是 HuggingFace 原始格式（safetensors）。".to_string());
+        }
+    }
+
     let ir_model_name = model_path.split('/').last().unwrap_or(&model_path);
     let ir_output_dir = format!("{}_ov", ir_model_name);
     let abs_ir_dir = models_dir.join(&ir_output_dir);
@@ -1351,6 +1514,12 @@ pub async fn convert_model_to_ir(
     };
     let _ = app.emit("model-server-status", status);
 
+    let _ = app.emit("model-deploy-log", DeployLog {
+        model_id: model_path.clone(),
+        line: "开始转换模型到 OpenVINO IR 格式...".to_string(),
+        source: "stdout".to_string(),
+    });
+
     let script_str = convert_script.to_string_lossy().to_string();
     let model_dir_str = abs_model_dir.to_string_lossy().to_string();
     let output_dir_str = abs_ir_dir.to_string_lossy().to_string();
@@ -1369,8 +1538,15 @@ pub async fn convert_model_to_ir(
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let result = cmd.output().await;
+    let mut child = cmd.spawn().map_err(|e| format!("启动转换脚本失败: {}", e))?;
+    spawn_log_reader(app.clone(), model_path.clone(), &mut child);
+    let result = child.wait_with_output().await;
 
+    let progress_content = if progress_file.exists() {
+        fs::read_to_string(&progress_file).ok()
+    } else {
+        None
+    };
     let _ = fs::remove_file(&progress_file);
 
     match result {
@@ -1400,6 +1576,15 @@ pub async fn convert_model_to_ir(
                 let _ = app.emit("model-server-status", status);
                 return Ok(ir_output_dir);
             }
+            let error_msg = if let Some(ref content) = progress_content {
+                if let Ok(data) = serde_json::from_str::<serde_json::Value>(content) {
+                    data.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let error_lines: Vec<&str> = stderr.lines().filter(|l| {
                 let l = l.trim();
@@ -1414,19 +1599,26 @@ pub async fn convert_model_to_ir(
                     && !l.starts_with("loss_type=None")
                     && !l.contains("it/s]")
             }).collect();
-            let error_msg = if error_lines.is_empty() {
-                format!("模型转换失败 (退出码: {})", output.status)
-            } else {
+            let final_error = if !error_msg.is_empty() {
+                error_msg
+            } else if !error_lines.is_empty() {
                 error_lines.last().unwrap_or(&"未知错误").to_string()
+            } else {
+                format!("模型转换失败 (退出码: {})", output.status)
             };
+            let _ = app.emit("model-deploy-log", DeployLog {
+                model_id: model_path.clone(),
+                line: format!("转换失败: {}", final_error),
+                source: "stderr".to_string(),
+            });
             let status = ServerStatus {
                 model_id: model_path.clone(),
                 status: "error".to_string(),
                 port: 0,
-                message: error_msg.clone(),
+                message: final_error.clone(),
             };
             let _ = app.emit("model-server-status", status);
-            Err(error_msg)
+            Err(final_error)
         }
         Err(e) => {
             let status = ServerStatus {
@@ -1438,6 +1630,190 @@ pub async fn convert_model_to_ir(
             let _ = app.emit("model-server-status", status);
             Err(format!("转换进程启动失败: {}", e))
         }
+    }
+}
+
+#[tauri::command]
+pub async fn uninstall_dependency(app: tauri::AppHandle, package: String) -> Result<(), String> {
+    if package == "msvc" || package == "oneapi" {
+        return Err(format!("{} 不支持通过命令行卸载，请手动卸载。", package));
+    }
+
+    let packages_to_remove: Vec<&str> = match package.as_str() {
+        "openvino" => vec!["openvino", "openvino-genai", "optimum"],
+        _ => vec![&package],
+    };
+
+    let progress = InstallProgress {
+        status: "installing".to_string(),
+        message: format!("正在卸载 {}...", package),
+    };
+    let _ = app.emit("dependency-install-progress", progress);
+
+    for pkg in &packages_to_remove {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "python", "-m", "pip", "uninstall", pkg, "-y"]);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let _ = cmd.output().await;
+    }
+
+    let progress2 = InstallProgress {
+        status: "completed".to_string(),
+        message: format!("{} 已卸载", package),
+    };
+    let _ = app.emit("dependency-install-progress", progress2);
+    Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SingleDepStatus {
+    pub key: String,
+    pub installed: bool,
+    pub version: Option<String>,
+}
+
+#[tauri::command]
+pub async fn check_single_dep(package: String) -> Result<SingleDepStatus, String> {
+    match package.as_str() {
+        "python" => {
+            let result = timeout(Duration::from_secs(10), async {
+                let mut cmd = Command::new("cmd");
+                cmd.args(["/C", "python", "--version"]);
+                #[cfg(target_os = "windows")]
+                cmd.creation_flags(CREATE_NO_WINDOW);
+                cmd.output().await
+            })
+            .await;
+            let installed = match &result {
+                Ok(Ok(output)) => output.status.success(),
+                _ => false,
+            };
+            let version = match &result {
+                Ok(Ok(output)) => {
+                    let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if v.is_empty() {
+                        String::from_utf8_lossy(&output.stderr).trim().to_string()
+                    } else {
+                        v
+                    }
+                }
+                _ => String::new(),
+            };
+            Ok(SingleDepStatus {
+                key: package,
+                installed,
+                version: if installed { Some(version) } else { None },
+            })
+        }
+        "modelscope" | "llama-cpp-python" | "transformers" => {
+            let module = if package == "llama-cpp-python" {
+                "llama_cpp"
+            } else {
+                &package
+            };
+            let result = timeout(Duration::from_secs(10), async {
+                let mut cmd = Command::new("cmd");
+                cmd.args(["/C", "python", "-c", &format!("import importlib.util; spec = importlib.util.find_spec('{}'); print(spec is not None)", module)]);
+                #[cfg(target_os = "windows")]
+                cmd.creation_flags(CREATE_NO_WINDOW);
+                cmd.output().await
+            })
+            .await;
+            let installed = match &result {
+                Ok(Ok(output)) => {
+                    output.status.success()
+                        && String::from_utf8_lossy(&output.stdout).trim() == "True"
+                }
+                _ => false,
+            };
+            Ok(SingleDepStatus {
+                key: package,
+                installed,
+                version: None,
+            })
+        }
+        "openvino" => {
+            let result = timeout(Duration::from_secs(10), async {
+                let mut cmd = Command::new("cmd");
+                cmd.args(["/C", "python", "-c", "import openvino; print(openvino.__version__)"]);
+                #[cfg(target_os = "windows")]
+                cmd.creation_flags(CREATE_NO_WINDOW);
+                cmd.output().await
+            })
+            .await;
+            let installed = match &result {
+                Ok(Ok(output)) => output.status.success(),
+                _ => false,
+            };
+            let version = match &result {
+                Ok(Ok(output)) => {
+                    let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if v.is_empty() { None } else { Some(v) }
+                }
+                _ => None,
+            };
+            Ok(SingleDepStatus {
+                key: package,
+                installed,
+                version,
+            })
+        }
+        "openvino-genai" => {
+            let result = timeout(Duration::from_secs(10), async {
+                let mut cmd = Command::new("cmd");
+                cmd.args(["/C", "python", "-c", "import openvino_genai"]);
+                #[cfg(target_os = "windows")]
+                cmd.creation_flags(CREATE_NO_WINDOW);
+                cmd.output().await
+            })
+            .await;
+            let installed = match &result {
+                Ok(Ok(output)) => output.status.success(),
+                _ => false,
+            };
+            Ok(SingleDepStatus {
+                key: package,
+                installed,
+                version: None,
+            })
+        }
+        "optimum" => {
+            let result = timeout(Duration::from_secs(10), async {
+                let mut cmd = Command::new("cmd");
+                cmd.args(["/C", "python", "-c", "import optimum.intel"]);
+                #[cfg(target_os = "windows")]
+                cmd.creation_flags(CREATE_NO_WINDOW);
+                cmd.output().await
+            })
+            .await;
+            let installed = match &result {
+                Ok(Ok(output)) => output.status.success(),
+                _ => false,
+            };
+            Ok(SingleDepStatus {
+                key: package,
+                installed,
+                version: None,
+            })
+        }
+        "oneapi" => {
+            let installed = std::path::Path::new(r"C:\Program Files (x86)\Intel\oneAPI\setvars.bat").exists();
+            Ok(SingleDepStatus {
+                key: package,
+                installed,
+                version: None,
+            })
+        }
+        "msvc" => {
+            let installed = detect_msvc();
+            Ok(SingleDepStatus {
+                key: package,
+                installed,
+                version: None,
+            })
+        }
+        _ => Err(format!("未知的依赖项: {}", package)),
     }
 }
 
@@ -1462,14 +1838,17 @@ pub async fn deploy_model(
                 if abs_model_dir.exists() {
                     for entry in WalkDir::new(&abs_model_dir).into_iter().filter_map(|e| e.ok()) {
                         if let Some(name) = entry.file_name().to_str() {
-                            if name.ends_with(".gguf") {
+                            let name_lower = name.to_lowercase();
+                            if name_lower.ends_with(".gguf")
+                                && !name_lower.contains("mmproj")
+                            {
                                 found = Some(entry.path().to_path_buf());
                                 break;
                             }
                         }
                     }
                 }
-                found.ok_or_else(|| "未找到 GGUF 模型文件".to_string())?
+                found.ok_or_else(|| "未找到 GGUF 模型文件（已排除 mmproj 等非主模型文件）".to_string())?
             } else {
                 abs_model_dir.join(&gguf_file)
             };
@@ -1502,16 +1881,17 @@ pub async fn deploy_model(
                     &port_str,
                     "--host",
                     "127.0.0.1",
-                    "--n-gpu-layers",
+                    "--n_gpu_layers",
                     &n_gpu_layers,
                 ])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
                 #[cfg(target_os = "windows")]
                 cmd.creation_flags(CREATE_NO_WINDOW);
-                let child = cmd
+                let mut child = cmd
                     .spawn()
                     .map_err(|e| format!("启动 llama.cpp 服务器失败: {}", e))?;
+                spawn_log_reader(app.clone(), model_path.clone(), &mut child);
                 *guard = Some(ModelServer {
                     child,
                     port,
@@ -1519,7 +1899,7 @@ pub async fn deploy_model(
                 });
             }
 
-            let health_url = format!("http://127.0.0.1:{}/health", port);
+            let health_endpoints = ["/health", "/v1/models"];
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
                 .build()
@@ -1529,15 +1909,21 @@ pub async fn deploy_model(
             loop {
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 retries += 1;
-                match client.get(&health_url).send().await {
-                    Ok(resp) if resp.status().is_success() => {
-                        break;
-                    }
-                    _ => {
-                        if retries > 60 {
-                            return Err("llama.cpp 服务器启动超时 (30秒)".to_string());
+                let mut healthy = false;
+                for ep in &health_endpoints {
+                    let url = format!("http://127.0.0.1:{}{}", port, ep);
+                    if let Ok(resp) = client.get(&url).send().await {
+                        if resp.status().is_success() {
+                            healthy = true;
+                            break;
                         }
                     }
+                }
+                if healthy {
+                    break;
+                }
+                if retries > 60 {
+                    return Err("llama.cpp 服务器启动超时 (30秒)".to_string());
                 }
             }
 
@@ -1587,7 +1973,7 @@ pub async fn deploy_model(
             };
             let _ = app.emit("model-server-status", status);
 
-            start_model_server(&app, &Backend::OpenVINO, port).await?;
+            start_model_server(&app, &Backend::OpenVINO, port, &model_path).await?;
 
             let load_status = ServerStatus {
                 model_id: model_path.clone(),
@@ -1647,7 +2033,7 @@ pub async fn deploy_model(
             };
             let _ = app.emit("model-server-status", status);
 
-            start_model_server(&app, &Backend::Transformers, port).await?;
+            start_model_server(&app, &Backend::Transformers, port, &model_path).await?;
 
             let load_status = ServerStatus {
                 model_id: model_path.clone(),

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/build-fairy-action.mjs && vite",
-    "build": "node scripts/increment-version.mjs && node scripts/build-fairy-action.mjs && vue-tsc --noEmit && vite build",
+    "build": "node scripts/build-fairy-action.mjs && vue-tsc --noEmit && vite build",
+    "版本号升级": "node scripts/increment-version.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "pnpm tauri dev",

@@ -19,7 +19,7 @@ pub use tts::{tts_generate, tts_list_voices};
 pub use local_models::{
     check_environment, search_models, download_model, cancel_download,
     deploy_model, stop_model, delete_model, get_model_info, convert_model_to_ir,
-    install_dependency,
+    install_dependency, uninstall_dependency, check_single_dep, SingleDepStatus,
 };
 pub use browser::{BrowserManager, browser_start, browser_execute, browser_stop};
 pub use proxy::{proxy_chat, proxy_chat_stream};

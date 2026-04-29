@@ -224,7 +224,7 @@ onMounted(async () => {
   try {
     appVersion.value = await getVersion()
   } catch {
-    appVersion.value = '0.1.0'
+    appVersion.value = '0.1.17'
   }
   runtimeInfo.value = navigator.userAgent.includes('Windows') ? 'Windows' : 'Unknown'
 })

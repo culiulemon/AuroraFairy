@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Fairy",
+  "productName": "AuroraFairy",
   "version": "0.1.17",
   "identifier": "com.aurorafairy.app",
   "build": {

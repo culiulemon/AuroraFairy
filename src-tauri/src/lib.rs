@@ -15,6 +15,7 @@ use commands::{
 };
 use commands::convert_model_to_ir;
 use commands::install_dependency;
+use commands::{uninstall_dependency, check_single_dep};
 use commands::{BrowserManager, browser_start, browser_execute, browser_stop};
 use commands::fbm_fs::{
     fbm_mkdir, fbm_write_file, fbm_read_file, fbm_unlink, fbm_readdir,
@@ -548,6 +549,8 @@ pub fn run() {
             get_model_info,
             convert_model_to_ir,
             install_dependency,
+            uninstall_dependency,
+            check_single_dep,
             browser_start,
             browser_execute,
             browser_stop,
